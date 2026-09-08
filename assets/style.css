@@ -41,3 +41,16 @@
 .top-section{margin-top:52px}
 @media(max-width:850px){.hero{padding:32px 0 52px;align-items:start}.hero-copy{padding-top:0}.content-grid{padding-bottom:54px}}
 @media(max-width:560px){.hero{padding:28px 0 42px}.hero-meta{margin-top:24px}.top-section{margin-top:42px}}
+
+/* Votação compacta ao lado do player e ranking top 10 */
+.vote-hero{margin-top:38px;max-width:560px}
+.vote-hero .section-head{align-items:flex-end}
+.vote-hero .section-head h2{font-size:27px;letter-spacing:-.8px;margin-bottom:14px}
+.vote-hero .vote-count strong{font-size:27px}
+.vote-hero .vote-actions{gap:8px}
+.vote-hero .vote-btn{padding:11px 12px;gap:9px}
+.vote-hero .vote-btn>span{font-size:24px}
+.vote-hero .vote-btn small{font-size:11px}
+.top-section{margin-top:32px}
+@media(max-width:850px){.vote-hero{max-width:none;margin-top:32px}.vote-hero .section-head h2{font-size:30px}}
+@media(max-width:560px){.vote-hero{margin-top:28px}.vote-hero .vote-actions{grid-template-columns:1fr}.vote-hero .section-head h2{font-size:28px}}
