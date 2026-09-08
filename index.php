@@ -9,7 +9,7 @@ require_once __DIR__ . '/api/bootstrap.php';
   <meta name="description" content="Ouça a Rádio Social Plus Brasil ao vivo, vote nas músicas e acompanhe as mais votadas.">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=top10-covers1">
+  <link rel="stylesheet" href="assets/style.css?v=vote-colors1">
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-97DXJD08VP"></script>
   <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-97DXJD08VP');</script>
   <script>window.OneSignal=window.OneSignal||[];window.OneSignal.push(function(){if(!window._oneSignalInitOptions||!window.OneSignal.init)return;window.OneSignal.SERVICE_WORKER_UPDATER_PATH="wp-content/plugins/onesignal-free-web-push-notifications/sdk_files/OneSignalSDKWorker.js";window.OneSignal.SERVICE_WORKER_PATH="wp-content/plugins/onesignal-free-web-push-notifications/sdk_files/OneSignalSDKWorker.js";window.OneSignal.SERVICE_WORKER_PARAM={scope:"wp-content/plugins/onesignal-free-web-push-notifications/sdk_files/"};delete window._oneSignalInitOptions.path;window.OneSignal.init(window._oneSignalInitOptions)});</script>
