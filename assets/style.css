@@ -16,3 +16,6 @@
 @media(max-width:1000px){.footer-top{grid-template-columns:190px minmax(0,1fr)}.posts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:650px){.footer-top{grid-template-columns:1fr}.posts{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:390px){.posts{grid-template-columns:1fr}}
+
+/* As capas dos posts devem manter suas cores originais; somente o logo usa inversão. */
+.post>img{filter:none!important;mix-blend-mode:normal}
