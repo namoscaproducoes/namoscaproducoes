@@ -1,0 +1,15 @@
+<?php
+require_once __DIR__ . '/bootstrap.php';
+$action=$_GET['action']??''; $in=body();
+if($action==='register'){foreach(['name','email','state','city','login','password'] as $f)if(empty($in[$f]))json_out(['error'=>'Preencha todos os campos.'],422);try{$st=$db->prepare('INSERT INTO users(name,email,state,city,login,password,created_at) VALUES(?,?,?,?,?,?,?)');$st->execute([$in['name'],$in['email'],$in['state'],$in['city'],$in['login'],password_hash($in['password'],PASSWORD_DEFAULT),date('c')]);json_out(['ok'=>true]);}catch(Exception $e){json_out(['error'=>'E-mail ou login já cadastrado.'],409);}}
+if($action==='login'){$st=$db->prepare('SELECT * FROM users WHERE login=? OR email=? LIMIT 1');$st->execute([$in['login']??'',$in['login']??'']);$u=$st->fetch(PDO::FETCH_ASSOC);if(!$u||!password_verify($in['password']??'',$u['password']))json_out(['error'=>'Login ou senha inválidos.'],401);unset($u['password']);$_SESSION['user']=$u;json_out(['user'=>$u]);}
+if($action==='logout'){session_destroy();json_out(['ok'=>true]);}
+if($action==='me')json_out(['user'=>current_user()]);
+if($action==='vote'){if(empty($in['artist'])||empty($in['title'])||!in_array($in['vote'],['like','dislike'],true))json_out(['error'=>'Voto inválido.'],422);$u=current_user();$st=$db->prepare('INSERT INTO votes(user_id,voter_name,artist,title,vote,created_at) VALUES(?,?,?,?,?,?)');$st->execute([$u['id']??null,$u['name']??'Visitante',$in['artist'],$in['title'],$in['vote'],date('c')]);json_out(['ok'=>true]);}
+if($action==='top'){$rows=$db->query("SELECT artist,title,SUM(CASE WHEN vote='like' THEN 1 ELSE -1 END) score,COUNT(*) votes FROM votes GROUP BY artist,title ORDER BY score DESC,votes DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);if(!$rows)$rows=[['artist'=>'Rádio Social Plus Brasil','title'=>'Aguardando seus votos','score'=>0,'votes'=>0]];json_out(['items'=>$rows]);}
+if($action==='activity'){$rows=$db->query('SELECT voter_name,artist,title,created_at FROM votes ORDER BY id DESC LIMIT 5')->fetchAll(PDO::FETCH_ASSOC);json_out(['items'=>$rows]);}
+if($action==='admin'){if(($_POST['login']??'')!==ADMIN_LOGIN||($_POST['password']??'')!==ADMIN_PASSWORD)json_out(['error'=>'Não autorizado'],401);$q=$db->query("SELECT strftime('%Y-%m-%d',created_at) day,COUNT(*) votes FROM votes GROUP BY day ORDER BY day DESC LIMIT 31")->fetchAll(PDO::FETCH_ASSOC);json_out(['votes'=>$q]);}
+if($action==='users.csv'){if(($_GET['key']??'')!==ADMIN_PASSWORD)die('Não autorizado');header('Content-Type:text/csv; charset=utf-8');header('Content-Disposition: attachment; filename=usuarios-radio.csv');$o=fopen('php://output','w');fputcsv($o,['Nome','Email','Estado','Cidade','Data do cadastro']);foreach($db->query('SELECT name,email,state,city,created_at FROM users ORDER BY id DESC') as $r)fputcsv($o,$r);exit;}
+if($action==='posts'){$url='https://radiosocialplusbrasil.com.br/wp-json/wp/v2/posts?per_page=5&_fields=title,link,date';$c=@file_get_contents($url);$items=[];if($c)$items=json_decode($c,true)?:[];json_out(['items'=>$items]);}
+json_out(['error'=>'Ação não encontrada'],404);
+?>
