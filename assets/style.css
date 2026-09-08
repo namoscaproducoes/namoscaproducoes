@@ -3,3 +3,16 @@
 .footer-heading img{width:190px;filter:invert(1);display:block;margin-bottom:28px}.footer-heading h3{margin:0;font-size:21px}.posts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;align-items:stretch}.post{font-size:13px;border:1px solid #46443f;padding:0;max-width:none;background:#292825;display:flex;flex-direction:column;min-width:0}.post>img{width:100%;height:104px;object-fit:cover;display:block}.post-body{padding:13px;display:flex;flex-direction:column;gap:8px;flex:1}.post small{color:#999;display:block;margin:0;font:10px 'DM Mono'}.post b{font-size:13px;line-height:1.25;color:#fff;font-weight:500;display:block}.post a{color:var(--orange);text-decoration:none;font-size:11px;font-weight:700;margin-top:auto;padding-top:5px}.post a:hover{text-decoration:underline}@media(max-width:1000px){.posts{grid-template-columns:repeat(3,1fr)}}@media(max-width:600px){.posts{grid-template-columns:repeat(2,1fr)}.post>img{height:90px}}
 
 .post-cover-placeholder{height:104px;background:linear-gradient(135deg,#ffae18,#d97808);display:flex;align-items:center;justify-content:center;text-align:center;color:#171717;font:700 14px Outfit;letter-spacing:1px}@media(max-width:600px){.post-cover-placeholder{height:90px}}
+
+/* Correção final da grade de conteúdos recentes */
+.footer-top{grid-template-columns:220px minmax(0,1fr);gap:34px}
+.footer-heading{min-width:0}
+.posts{width:100%;min-width:0;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.post{width:100%;min-width:0;overflow:hidden}
+.post>img,.post-cover-placeholder{width:100%;height:118px;object-fit:cover}
+.post-body{min-width:0;padding:14px;gap:9px}
+.post-body b{font-size:13px;line-height:1.3;overflow-wrap:anywhere;word-break:normal}
+.post-body a{white-space:nowrap}
+@media(max-width:1000px){.footer-top{grid-template-columns:190px minmax(0,1fr)}.posts{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.footer-top{grid-template-columns:1fr}.posts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:390px){.posts{grid-template-columns:1fr}}

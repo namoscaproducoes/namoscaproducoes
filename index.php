@@ -9,7 +9,7 @@ require_once __DIR__ . '/api/bootstrap.php';
   <meta name="description" content="Ouça a Rádio Social Plus Brasil ao vivo, vote nas músicas e acompanhe as mais votadas.">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=3af6cad">
+  <link rel="stylesheet" href="assets/style.css?v=posts-layout2">
 </head>
 <body>
   <div class="grain"></div>
