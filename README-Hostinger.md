@@ -1,6 +1,6 @@
-# Rádio Social Plus Brasil — pacote Hostinger
+# Rádio Social Plus Brasil — pacote Hostinger para socialplusbraisl.com.br
 
-1. Envie todo o conteúdo desta pasta para a pasta apontada pelo domínio.
+1. Envie todo o conteúdo desta pasta para a pasta apontada pelo domínio `https://socialplusbraisl.com.br/`.
 2. Garanta que o PHP tenha `pdo_sqlite` habilitado e que a pasta `data/` tenha permissão de escrita (755 ou 775).
 3. Edite `config.php`: informe sua chave da Last.fm em `LASTFM_API_KEY` (opcional) e troque `ADMIN_PASSWORD` antes de publicar.
 4. O painel fica em `/admin.php`; ele exibe votos e oferece download dos usuários em CSV, que abre no Excel.
