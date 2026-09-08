@@ -9,11 +9,11 @@ require_once __DIR__ . '/api/bootstrap.php';
   <meta name="description" content="Ouça a Rádio Social Plus Brasil ao vivo, vote nas músicas e acompanhe as mais votadas.">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=posts-colors1">
+  <link rel="stylesheet" href="assets/style.css?v=sticky-menu1">
 </head>
 <body>
   <div class="grain"></div>
-  <header class="topbar"><a class="brand" href="/"><img src="assets/logo.png" alt="Rádio Social Plus Brasil"></a><div class="top-actions"><span class="live-pill"><i></i> NO AR AGORA</span><div id="authArea"><button class="text-btn" id="loginOpen">Faça seu login <span>↗</span></button><a class="outline-btn" href="register.php" target="_blank">Cadastre-se</a></div></div></header>
+  <header class="topbar"><a class="brand" href="/"><img src="assets/logo.png" alt="Rádio Social Plus Brasil"></a><div class="top-actions"><span class="live-pill"><i></i><span>NO AR AGORA</span><b id="menuTrack">Rádio Social Plus Brasil</b></span><div id="authArea"><button class="text-btn" id="loginOpen">Faça seu login <span>↗</span></button><a class="outline-btn" href="register.php" target="_blank">Cadastre-se</a></div></div></header>
   <main>
     <section class="hero container">
       <div class="hero-copy"><p class="eyebrow">A rádio que conecta você</p><h1>Sinta, ouça<br>e <em>compartilhe</em></h1><p class="hero-sub">Música, informação e conexão em um só lugar. Dê o play e fique com a gente.</p><div class="hero-meta"><span>◉  AO VIVO 24H</span><span>✦  BRASIL</span></div></div>
@@ -23,5 +23,5 @@ require_once __DIR__ . '/api/bootstrap.php';
   </main>
   <footer><div class="footer-top container"><div class="footer-heading"><img src="assets/logo.png" alt="Rádio Social Plus Brasil"><p class="eyebrow">No site da rádio</p><h3>Conteúdos recentes</h3></div><div id="posts" class="posts"></div></div><div class="footer-bottom container"><span>© <?php echo date('Y'); ?> Rádio Social Plus Brasil</span><span>Feito para quem vive de música.</span></div></footer>
   <div class="modal-backdrop" id="loginModal"><div class="login-modal"><button class="close" id="loginClose">×</button><p class="eyebrow">Bem-vindo de volta</p><h2>Entrar na rádio</h2><form id="loginForm"><label>Login ou e-mail<input name="login" required autocomplete="username"></label><label>Senha<input name="password" type="password" required autocomplete="current-password"></label><button class="primary-btn">Entrar　→</button><p id="loginMessage" class="form-message"></p></form><p class="modal-foot">Ainda não tem cadastro? <a href="register.php" target="_blank">Crie sua conta</a></p></div></div>
-  <script>window.RADIO_CONFIG=<?php echo json_encode(['apiBase'=>'api','lastfmKey'=>LASTFM_API_KEY,'stream'=>RADIO_STREAM]); ?>;</script><script src="assets/app.js?v=posts2"></script>
+  <script>window.RADIO_CONFIG=<?php echo json_encode(['apiBase'=>'api','lastfmKey'=>LASTFM_API_KEY,'stream'=>RADIO_STREAM]); ?>;</script><script src="assets/app.js?v=sticky-menu1"></script>
 </body></html>
