@@ -209,6 +209,12 @@ function heroespet_ai_set_progress($status, $percent, $title, $message) {
 function heroespet_ai_progress_ajax() {
     check_ajax_referer('heroespet_ai_progress');
     if (!current_user_can('manage_options')) wp_send_json_error(array('message' => 'Sem permissão.'), 403);
+    $pending = get_option('heroespet_ai_manus_pending', array());
+    if (!empty($pending['task_id']) && !get_transient('heroespet_ai_manus_ajax_lock')) {
+        set_transient('heroespet_ai_manus_ajax_lock', 1, 8);
+        heroespet_ai_manus_poll();
+        delete_transient('heroespet_ai_manus_ajax_lock');
+    }
     wp_send_json_success(get_transient('heroespet_ai_progress') ?: array('status' => 'idle', 'percent' => 0, 'title' => '', 'message' => ''));
 }
 
@@ -383,7 +389,7 @@ function heroespet_ai_manus_poll() {
     $messages = json_decode(wp_remote_retrieve_body($poll), true); $attachment = null;
     foreach (($messages['messages'] ?? array()) as $event) {
         if (!empty($event['error_message']['content'])) { delete_option('heroespet_ai_manus_pending'); heroespet_ai_set_progress('error', 100, 'Falha na imagem Manus', $event['error_message']['content']); heroespet_ai_log('ERROR', 'Falha na tarefa Manus: ' . $event['error_message']['content']); return; }
-        foreach (($event['assistant_message']['attachments'] ?? array()) as $item) if (!empty($item['url']) && ($item['type'] ?? '') === 'image') $attachment = $item;
+        foreach (($event['assistant_message']['attachments'] ?? array()) as $item) if (!empty($item['url']) && in_array(($item['type'] ?? ''), array('image', 'file'), true)) $attachment = $item;
     }
     if (!$attachment) { heroespet_ai_set_progress('running', 55, 'Gerando imagem pela Manus', 'A tarefa Manus ainda está processando; o próximo acompanhamento será automático.'); wp_schedule_single_event(time() + 20, 'heroespet_ai_manus_poll_event'); return; }
     $download = wp_remote_get($attachment['url'], array('timeout' => 90));
