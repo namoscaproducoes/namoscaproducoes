@@ -27,6 +27,7 @@ add_action('admin_post_heroespet_ai_generate_now', 'heroespet_ai_generate_now');
 add_action('admin_post_heroespet_ai_clear_logs', 'heroespet_ai_clear_logs');
 add_action('wp_ajax_heroespet_ai_progress', 'heroespet_ai_progress_ajax');
 add_action(HEROESPET_AI_CRON_HOOK, 'heroespet_ai_cron_generate');
+add_action('heroespet_ai_manus_poll_event', 'heroespet_ai_manus_poll');
 add_action('admin_notices', 'heroespet_ai_admin_notice');
 
 function heroespet_ai_defaults() {
@@ -243,8 +244,13 @@ function heroespet_ai_generate_content($manual = false) {
         $article = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], $article_prompt);
         if (is_wp_error($article)) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $article->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $article->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
         $data = heroespet_ai_parse_json(array('candidates' => array(array('content' => array('parts' => array(array('text' => $article)))))));
-        $image = heroespet_ai_manus_generate_image($opts['manus_api_key'], $image_prompt);
-        if (is_wp_error($image)) { heroespet_ai_set_progress('error', 100, 'Falha na imagem Manus', $image->get_error_message()); heroespet_ai_log('ERROR', 'Falha na imagem Manus: ' . $image->get_error_message()); return array('ok' => false, 'message' => $image->get_error_message()); }
+        $manus_task = heroespet_ai_manus_create_task($opts['manus_api_key'], $image_prompt);
+        if (is_wp_error($manus_task)) { heroespet_ai_set_progress('error', 100, 'Falha ao iniciar imagem Manus', $manus_task->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao iniciar imagem Manus: ' . $manus_task->get_error_message()); return array('ok' => false, 'message' => $manus_task->get_error_message()); }
+        update_option('heroespet_ai_manus_pending', array('task_id' => $manus_task, 'api_key' => $opts['manus_api_key'], 'data' => $data, 'topic' => $topic, 'opts' => $opts), false);
+        heroespet_ai_set_progress('running', 50, 'Imagem Manus em processamento', 'A tarefa foi criada; o acompanhamento continuará em execuções curtas.');
+        heroespet_ai_log('INFO', 'Tarefa Manus ' . $manus_task . ' criada; polling assíncrono agendado.');
+        wp_schedule_single_event(time() + 10, 'heroespet_ai_manus_poll_event');
+        return array('ok' => true, 'pending' => true, 'message' => 'Imagem Manus em processamento.');
     } else {
         $responses = heroespet_ai_parallel_requests_retry(array(
             'article' => heroespet_ai_request_payload($opts['gemini_text_key'], $opts['text_model'], $article_prompt, false),
@@ -356,6 +362,39 @@ function heroespet_ai_parallel_requests_retry($payloads) {
         if ($attempt < 3) sleep(5 * $attempt);
     }
     return $last;
+}
+
+function heroespet_ai_manus_create_task($api_key, $prompt) {
+    $headers = array('Content-Type' => 'application/json', 'x-manus-api-key' => $api_key);
+    $body = array('message' => array('content' => "Gere uma única imagem fotográfica profissional para capa de artigo, sem texto, sem logotipos e sem marca d'água. Use composição horizontal 16:9 e entregue a imagem como anexo da resposta. Tema: " . $prompt), 'interactive_mode' => false, 'hide_in_task_list' => true, 'share_visibility' => 'private', 'agent_profile' => 'manus-1.6-lite', 'title' => 'HeroesPet — imagem editorial');
+    $response = wp_remote_post('https://api.manus.ai/v2/task.create', array('timeout' => 45, 'headers' => $headers, 'body' => wp_json_encode($body)));
+    if (is_wp_error($response)) return new WP_Error('manus_http', $response->get_error_message());
+    $data = json_decode(wp_remote_retrieve_body($response), true); $code = wp_remote_retrieve_response_code($response);
+    if ($code >= 300 || empty($data['ok'])) return new WP_Error('manus_create', $data['error']['message'] ?? 'A API Manus recusou a tarefa.');
+    $task_id = $data['task_id'] ?? ($data['task']['id'] ?? ($data['data']['task_id'] ?? ''));
+    return $task_id ? $task_id : new WP_Error('manus_task', 'A API Manus não retornou o identificador da tarefa.');
+}
+
+function heroespet_ai_manus_poll() {
+    $pending = get_option('heroespet_ai_manus_pending', array());
+    if (empty($pending['task_id']) || empty($pending['api_key'])) return;
+    $poll = wp_remote_get('https://api.manus.ai/v2/task.listMessages?task_id=' . rawurlencode($pending['task_id']) . '&order=desc&limit=50', array('timeout' => 45, 'headers' => array('x-manus-api-key' => $pending['api_key'])));
+    if (is_wp_error($poll)) { wp_schedule_single_event(time() + 20, 'heroespet_ai_manus_poll_event'); return; }
+    $messages = json_decode(wp_remote_retrieve_body($poll), true); $attachment = null;
+    foreach (($messages['messages'] ?? array()) as $event) {
+        if (!empty($event['error_message']['content'])) { delete_option('heroespet_ai_manus_pending'); heroespet_ai_set_progress('error', 100, 'Falha na imagem Manus', $event['error_message']['content']); heroespet_ai_log('ERROR', 'Falha na tarefa Manus: ' . $event['error_message']['content']); return; }
+        foreach (($event['assistant_message']['attachments'] ?? array()) as $item) if (!empty($item['url']) && ($item['type'] ?? '') === 'image') $attachment = $item;
+    }
+    if (!$attachment) { heroespet_ai_set_progress('running', 55, 'Gerando imagem pela Manus', 'A tarefa Manus ainda está processando; o próximo acompanhamento será automático.'); wp_schedule_single_event(time() + 20, 'heroespet_ai_manus_poll_event'); return; }
+    $download = wp_remote_get($attachment['url'], array('timeout' => 90));
+    if (is_wp_error($download) || !wp_remote_retrieve_body($download)) { wp_schedule_single_event(time() + 20, 'heroespet_ai_manus_poll_event'); return; }
+    $image = array('data' => wp_remote_retrieve_body($download), 'mime' => $attachment['content_type'] ?? 'image/png');
+    heroespet_ai_set_progress('running', 88, 'Publicando no WordPress', 'Imagem Manus recebida; salvando mídia, destaque e SEO.');
+    $post_id = heroespet_ai_create_post($pending['data'], $image, $pending['topic'], $pending['opts']);
+    delete_option('heroespet_ai_manus_pending');
+    if (is_wp_error($post_id)) { heroespet_ai_set_progress('error', 100, 'Falha na publicação', $post_id->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar post: ' . $post_id->get_error_message()); return; }
+    heroespet_ai_log('SUCCESS', 'Post #' . $post_id . ' criado com imagem da Manus, mídia, destaque e Yoast.');
+    heroespet_ai_set_progress('success', 100, 'Publicação concluída', 'Post #' . $post_id . ' criado com sucesso usando imagem Manus.');
 }
 
 function heroespet_ai_manus_generate_image($api_key, $prompt) {
