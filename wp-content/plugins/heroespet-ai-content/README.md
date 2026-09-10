@@ -14,7 +14,8 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 ## Observações
 
 - O agendamento usa o WP-Cron e o fuso definido em **Configurações > Geral**. Em sites com pouco tráfego, configure um cron real do servidor para chamar `wp-cron.php`.
-- O plugin usa `gemini-3.6-flash` para o texto e `gemini-2.5-flash-image` para a imagem por padrão; os campos são editáveis para permitir outros modelos compatíveis com a conta. Configurações antigas que usavam `gemini-2.5-flash` são migradas automaticamente para `gemini-3.6-flash`.
+- O plugin usa `gemini-3.6-flash` para o texto e `gemini-3.1-flash-image` (Nano Banana 2) para a imagem por padrão; a imagem usa a Interactions API oficial. Configurações antigas de texto e imagem são migradas automaticamente para esses modelos.
+- A geração de imagem depende de cota habilitada no projeto Google. Se o Google retornar `quota ... limit: 0`, isso não é um erro do WordPress: é necessário habilitar faturamento/um tier compatível ou escolher um projeto com cota de imagem disponível no Google AI Studio. Consulte [limites do Gemini](https://ai.google.dev/gemini-api/docs/rate-limits) e [geração de imagens](https://ai.google.dev/gemini-api/docs/image-generation).
 - A categoria é carregada diretamente de `get_categories()` e precisa ser selecionada no painel; o plugin não cria uma categoria paralela nem publica em uma categoria textual aproximada.
 - A chamada paralela usa cURL multi quando disponível. Caso o servidor não tenha a extensão cURL, o plugin usa automaticamente o transporte HTTP nativo do WordPress.
 - O preenchimento de Yoast grava foco, título SEO, meta description, Open Graph, Twitter e tipo de esquema. A cor verde final depende também da versão/configuração do Yoast e de sua análise interna.

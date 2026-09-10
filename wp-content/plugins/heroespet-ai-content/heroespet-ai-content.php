@@ -34,7 +34,7 @@ function heroespet_ai_defaults() {
         'gemini_text_key' => '',
         'gemini_image_key' => '',
         'text_model' => 'gemini-3.6-flash',
-        'image_model' => 'gemini-2.5-flash-image',
+        'image_model' => 'gemini-3.1-flash-image',
         'frequency' => 'daily',
         'publish_time' => '08:00',
         'prompt' => "Você é um jornalista especializado em mundo pet e medicina veterinária. Escreva em português do Brasil, com linguagem acolhedora, precisa e responsável. Alterne os temas automaticamente entre dicas práticas, cuidados veterinários, curiosidades e notícias relevantes da semana. Nunca invente diagnósticos, estatísticas ou fontes. Quando falar de saúde, inclua orientação para procurar um médico-veterinário. Produza título, subtítulo, artigo completo e dados SEO.",
@@ -47,6 +47,10 @@ function heroespet_ai_get_options() {
     $options = wp_parse_args((array) get_option(HEROESPET_AI_OPTION, array()), heroespet_ai_defaults());
     if (($options['text_model'] ?? '') === 'gemini-2.5-flash') {
         $options['text_model'] = 'gemini-3.6-flash';
+        update_option(HEROESPET_AI_OPTION, $options, false);
+    }
+    if (($options['image_model'] ?? '') === 'gemini-2.5-flash-image' || ($options['image_model'] ?? '') === 'gemini-2.5-flash-preview-image') {
+        $options['image_model'] = 'gemini-3.1-flash-image';
         update_option(HEROESPET_AI_OPTION, $options, false);
     }
     return $options;
@@ -231,7 +235,7 @@ function heroespet_ai_generate_content($manual = false) {
         'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
     ));
     if (is_wp_error($responses['article'])) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $responses['article']->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
-    if (is_wp_error($responses['image'])) { heroespet_ai_set_progress('error', 100, 'Falha na imagem', $responses['image']->get_error_message()); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $responses['image']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração da imagem.'); }
+    if (is_wp_error($responses['image'])) { $image_error = $responses['image']->get_error_message(); $quota = stripos($image_error, 'quota exceeded') !== false; $image_title = $quota ? 'Cota de imagem esgotada' : 'Falha na imagem'; $image_message = $quota ? 'A API informou cota zero para geração de imagens. Verifique faturamento e limites do projeto no Google AI Studio.' : $image_error; heroespet_ai_set_progress('error', 100, $image_title, $image_message); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $image_error); return array('ok' => false, 'message' => $image_message); }
     heroespet_ai_set_progress('running', 72, 'Validando conteúdo', 'Conferindo JSON, quantidade de palavras e dados da imagem.');
     $data = heroespet_ai_parse_json($responses['article']);
     if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_set_progress('error', 100, 'Conteúdo inválido', 'O artigo não atingiu 1.000 palavras ou não veio em JSON.'); heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
@@ -256,8 +260,17 @@ function heroespet_ai_pick_topic() {
 }
 
 function heroespet_ai_request_payload($key, $model, $prompt, $image) {
-    $generation = $image ? array('responseModalities' => array('IMAGE'), 'imageConfig' => array('aspectRatio' => '16:9')) : array('responseMimeType' => 'application/json', 'temperature' => 0.7, 'maxOutputTokens' => 8192);
-    return array('url' => 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent?key=' . rawurlencode($key), 'body' => array('contents' => array(array('role' => 'user', 'parts' => array(array('text' => $prompt)))), 'generationConfig' => $generation));
+    if ($image) {
+        return array('url' => 'https://generativelanguage.googleapis.com/v1beta/interactions', 'headers' => array('Content-Type: application/json', 'x-goog-api-key: ' . $key), 'body' => array('model' => $model, 'input' => array(array('type' => 'text', 'text' => $prompt)), 'response_format' => array('type' => 'image', 'aspect_ratio' => '16:9')));
+    }
+    return array(
+        'url' => 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent?key=' . rawurlencode($key),
+        'headers' => array('Content-Type: application/json'),
+        'body' => array(
+            'contents' => array(array('role' => 'user', 'parts' => array(array('text' => $prompt)))),
+            'generationConfig' => array('responseMimeType' => 'application/json', 'temperature' => 0.7, 'maxOutputTokens' => 8192),
+        ),
+    );
 }
 
 function heroespet_ai_call_text_retry($key, $model, $prompt) {
@@ -282,7 +295,7 @@ function heroespet_ai_parallel_requests($payloads) {
     if (!function_exists('curl_multi_init')) {
         $fallback = array();
         foreach ($payloads as $name => $payload) {
-            $response = wp_remote_post($payload['url'], array('timeout' => 180, 'headers' => array('Content-Type' => 'application/json'), 'body' => wp_json_encode($payload['body'])));
+            $response = wp_remote_post($payload['url'], array('timeout' => 180, 'headers' => ($payload['headers'] ?? array('Content-Type' => 'application/json')), 'body' => wp_json_encode($payload['body'])));
             if (is_wp_error($response)) { $fallback[$name] = $response; continue; }
             $code = wp_remote_retrieve_response_code($response); $data = json_decode(wp_remote_retrieve_body($response), true);
             $fallback[$name] = ($code >= 300 || !is_array($data)) ? new WP_Error('gemini_http', $data['error']['message'] ?? 'Erro na chamada Gemini.') : $data;
@@ -290,7 +303,7 @@ function heroespet_ai_parallel_requests($payloads) {
         return $fallback;
     }
     $mh = curl_multi_init(); $handles = array(); $results = array();
-    foreach ($payloads as $name => $payload) { $ch = curl_init($payload['url']); curl_setopt_array($ch, array(CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 180, CURLOPT_HTTPHEADER => array('Content-Type: application/json'), CURLOPT_POSTFIELDS => wp_json_encode($payload['body']))); curl_multi_add_handle($mh, $ch); $handles[$name] = $ch; }
+    foreach ($payloads as $name => $payload) { $ch = curl_init($payload['url']); curl_setopt_array($ch, array(CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 180, CURLOPT_HTTPHEADER => $payload['headers'] ?? array('Content-Type: application/json'), CURLOPT_POSTFIELDS => wp_json_encode($payload['body']))); curl_multi_add_handle($mh, $ch); $handles[$name] = $ch; }
     do { curl_multi_exec($mh, $running); if ($running) curl_multi_select($mh, 1); } while ($running);
     foreach ($handles as $name => $ch) { $raw = curl_multi_getcontent($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $data = json_decode($raw, true); $results[$name] = ($code >= 300 || !is_array($data)) ? new WP_Error('gemini_http', $data['error']['message'] ?? 'Erro na chamada Gemini.') : $data; curl_multi_remove_handle($mh, $ch); curl_close($ch); }
     curl_multi_close($mh); return $results;
@@ -320,6 +333,8 @@ function heroespet_ai_parse_json($response) {
 }
 
 function heroespet_ai_extract_image($response) {
+    if (!empty($response['output_image']['data'])) return array('data' => base64_decode($response['output_image']['data']), 'mime' => $response['output_image']['mime_type'] ?? 'image/png');
+    foreach (($response['steps'] ?? array()) as $step) foreach (($step['content'] ?? array()) as $content) if (($content['type'] ?? '') === 'image' && !empty($content['data'])) return array('data' => base64_decode($content['data']), 'mime' => $content['mime_type'] ?? 'image/png');
     foreach (($response['candidates'][0]['content']['parts'] ?? array()) as $part) { if (!empty($part['inlineData']['data'])) return array('data' => base64_decode($part['inlineData']['data']), 'mime' => $part['inlineData']['mimeType'] ?? 'image/png'); }
     return null;
 }
