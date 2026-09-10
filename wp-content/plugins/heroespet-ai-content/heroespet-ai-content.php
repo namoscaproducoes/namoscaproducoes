@@ -251,9 +251,23 @@ function heroespet_ai_generate_content($manual = false) {
             'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
         ));
         if (is_wp_error($responses['article'])) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $responses['article']->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
-        if (is_wp_error($responses['image'])) { $image_error = $responses['image']->get_error_message(); $quota = stripos($image_error, 'quota exceeded') !== false; $image_title = $quota ? 'Cota de imagem esgotada' : 'Falha na imagem'; $image_message = $quota ? 'A API informou cota zero para geração de imagens. Verifique faturamento e limites do projeto no Google AI Studio.' : $image_error; heroespet_ai_set_progress('error', 100, $image_title, $image_message); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $image_error); return array('ok' => false, 'message' => $image_message); }
+        if (is_wp_error($responses['image'])) {
+            $image_error = $responses['image']->get_error_message();
+            $quota = stripos($image_error, 'quota exceeded') !== false || stripos($image_error, 'limit: 0') !== false;
+            if ($quota && !empty($opts['manus_api_key'])) {
+                heroespet_ai_log('WARNING', 'Cota Gemini esgotada; acionando fallback automático para a Manus.');
+                heroespet_ai_set_progress('running', 60, 'Trocando para a Manus', 'O Gemini está sem cota de imagem; a Manus será usada automaticamente.');
+                $image = heroespet_ai_manus_generate_image($opts['manus_api_key'], $image_prompt);
+                if (is_wp_error($image)) { heroespet_ai_set_progress('error', 100, 'Falha na imagem Manus', $image->get_error_message()); heroespet_ai_log('ERROR', 'Falha na imagem Manus: ' . $image->get_error_message()); return array('ok' => false, 'message' => $image->get_error_message()); }
+            } else {
+                $image_title = $quota ? 'Cota de imagem esgotada' : 'Falha na imagem';
+                $image_message = $quota ? 'A API Gemini está com cota zero. Selecione Manus como provedor ou informe uma chave Manus para ativar o fallback automático.' : $image_error;
+                heroespet_ai_set_progress('error', 100, $image_title, $image_message); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $image_error); return array('ok' => false, 'message' => $image_message);
+            }
+        } else {
+            $image = heroespet_ai_extract_image($responses['image']);
+        }
         $data = heroespet_ai_parse_json($responses['article']);
-        $image = heroespet_ai_extract_image($responses['image']);
     }
     heroespet_ai_set_progress('running', 72, 'Validando conteúdo', 'Conferindo JSON, quantidade de palavras e dados da imagem.');
     if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_set_progress('error', 100, 'Conteúdo inválido', 'O artigo não atingiu 1.000 palavras ou não veio em JSON.'); heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
