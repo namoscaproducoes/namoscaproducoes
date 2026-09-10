@@ -33,6 +33,8 @@ function heroespet_ai_defaults() {
     return array(
         'gemini_text_key' => '',
         'gemini_image_key' => '',
+        'manus_api_key' => '',
+        'image_provider' => 'gemini',
         'text_model' => 'gemini-3.6-flash',
         'image_model' => 'gemini-3.1-flash-image',
         'frequency' => 'daily',
@@ -73,6 +75,8 @@ function heroespet_ai_register_settings() {
     $fields = array(
         'gemini_text_key' => array('Chave Gemini para texto', 'password'),
         'gemini_image_key' => array('Chave Gemini para imagem', 'password'),
+        'manus_api_key' => array('Chave da API Manus para imagem', 'password'),
+        'image_provider' => array('Provedor de imagens', 'provider'),
         'text_model' => array('Modelo de texto', 'text'),
         'image_model' => array('Modelo de imagem', 'text'),
         'prompt' => array('Prompt editável do artigo', 'textarea'),
@@ -86,10 +90,11 @@ function heroespet_ai_register_settings() {
 function heroespet_ai_sanitize_options($input) {
     $old = heroespet_ai_get_options();
     $out = heroespet_ai_defaults();
-    foreach (array('gemini_text_key', 'gemini_image_key', 'text_model', 'image_model') as $key) {
+    foreach (array('gemini_text_key', 'gemini_image_key', 'manus_api_key', 'text_model', 'image_model') as $key) {
         $value = isset($input[$key]) ? sanitize_text_field($input[$key]) : '';
-        $out[$key] = ($value === '' && in_array($key, array('gemini_text_key', 'gemini_image_key'), true)) ? $old[$key] : $value;
+        $out[$key] = ($value === '' && in_array($key, array('gemini_text_key', 'gemini_image_key', 'manus_api_key'), true)) ? ($old[$key] ?? '') : $value;
     }
+    $out['image_provider'] = in_array(($input['image_provider'] ?? ''), array('gemini', 'manus'), true) ? $input['image_provider'] : 'gemini';
     $legacy_category = !empty($old['category']) ? get_category_by_slug(sanitize_title($old['category'])) : null;
     $out['category_id'] = absint($input['category_id'] ?? ($old['category_id'] ?? ($legacy_category ? $legacy_category->term_id : 0)));
     $out['prompt'] = isset($input['prompt']) ? sanitize_textarea_field($input['prompt']) : $out['prompt'];
@@ -103,7 +108,9 @@ function heroespet_ai_sanitize_options($input) {
 function heroespet_ai_render_field($args) {
     $opts = heroespet_ai_get_options(); $key = $args['key']; $type = $args['type'];
     $value = $opts[$key] ?? '';
-    if ($type === 'category') {
+    if ($type === 'provider') {
+        echo '<select name="' . esc_attr(HEROESPET_AI_OPTION) . '[image_provider]"><option value="gemini" ' . selected($value, 'gemini', false) . '>Google Gemini</option><option value="manus" ' . selected($value, 'manus', false) . '>Manus API</option></select><p class="description">Escolha Manus para gerar a imagem pela sua conta Manus e não pela cota de imagens do Gemini.</p>';
+    } elseif ($type === 'category') {
         $categories = get_categories(array('hide_empty' => false, 'orderby' => 'name', 'order' => 'ASC'));
         echo '<select name="' . esc_attr(HEROESPET_AI_OPTION) . '[category_id]" required><option value="">Selecione uma categoria</option>';
         foreach ($categories as $category) printf('<option value="%d" %s>%s</option>', (int) $category->term_id, selected((int) $value, (int) $category->term_id, false), esc_html($category->name));
@@ -220,7 +227,9 @@ function heroespet_ai_log($level, $message) {
 function heroespet_ai_generate_content($manual = false) {
     $opts = heroespet_ai_get_options();
     heroespet_ai_set_progress('running', 10, 'Preparando publicação', 'Validando configurações e escolhendo o próximo tema.');
-    if (!$opts['gemini_text_key'] || !$opts['gemini_image_key']) { heroespet_ai_set_progress('error', 100, 'Configuração incompleta', 'Configure as duas chaves Gemini.'); heroespet_ai_log('ERROR', 'As duas chaves Gemini precisam estar configuradas.'); return array('ok' => false, 'message' => 'Configure as duas chaves Gemini antes de gerar.'); }
+    $image_provider = $opts['image_provider'] ?? 'gemini';
+    $missing = !$opts['gemini_text_key'] || ($image_provider === 'manus' ? empty($opts['manus_api_key']) : empty($opts['gemini_image_key']));
+    if ($missing) { $message = $image_provider === 'manus' ? 'Configure a chave Gemini de texto e a chave da API Manus.' : 'Configure as duas chaves Gemini.'; heroespet_ai_set_progress('error', 100, 'Configuração incompleta', $message); heroespet_ai_log('ERROR', $message); return array('ok' => false, 'message' => $message); }
     $topic = heroespet_ai_pick_topic();
     heroespet_ai_log('INFO', 'Início da geração: ' . $topic['label']);
     heroespet_ai_set_progress('running', 20, 'Criando resumo editorial', 'O Gemini está preparando o briefing que será usado no texto e na imagem.');
@@ -230,16 +239,24 @@ function heroespet_ai_generate_content($manual = false) {
     heroespet_ai_set_progress('running', 45, 'Gerando artigo e imagem', 'As duas solicitações ao Gemini estão sendo processadas em paralelo.');
     $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nRetorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt. O conteúdo deve ter no mínimo 1000 palavras, usar subtítulos HTML <h2> e <h3>, parágrafos úteis e não incluir markdown fences.";
     $image_prompt = "Fotografia profissional editorial, realista e natural, relacionada ao seguinte conteúdo para um portal pet brasileiro: " . $brief . ". Pode conter pessoas e pets ou apenas pets conforme fizer sentido. Composição horizontal para capa de artigo, iluminação profissional, sem texto, sem logotipos, sem marca d'água, aspecto 16:9.";
-    $responses = heroespet_ai_parallel_requests_retry(array(
-        'article' => heroespet_ai_request_payload($opts['gemini_text_key'], $opts['text_model'], $article_prompt, false),
-        'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
-    ));
-    if (is_wp_error($responses['article'])) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $responses['article']->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
-    if (is_wp_error($responses['image'])) { $image_error = $responses['image']->get_error_message(); $quota = stripos($image_error, 'quota exceeded') !== false; $image_title = $quota ? 'Cota de imagem esgotada' : 'Falha na imagem'; $image_message = $quota ? 'A API informou cota zero para geração de imagens. Verifique faturamento e limites do projeto no Google AI Studio.' : $image_error; heroespet_ai_set_progress('error', 100, $image_title, $image_message); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $image_error); return array('ok' => false, 'message' => $image_message); }
+    if ($image_provider === 'manus') {
+        $article = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], $article_prompt);
+        if (is_wp_error($article)) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $article->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $article->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
+        $data = heroespet_ai_parse_json(array('candidates' => array(array('content' => array('parts' => array(array('text' => $article)))))));
+        $image = heroespet_ai_manus_generate_image($opts['manus_api_key'], $image_prompt);
+        if (is_wp_error($image)) { heroespet_ai_set_progress('error', 100, 'Falha na imagem Manus', $image->get_error_message()); heroespet_ai_log('ERROR', 'Falha na imagem Manus: ' . $image->get_error_message()); return array('ok' => false, 'message' => $image->get_error_message()); }
+    } else {
+        $responses = heroespet_ai_parallel_requests_retry(array(
+            'article' => heroespet_ai_request_payload($opts['gemini_text_key'], $opts['text_model'], $article_prompt, false),
+            'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
+        ));
+        if (is_wp_error($responses['article'])) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $responses['article']->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
+        if (is_wp_error($responses['image'])) { $image_error = $responses['image']->get_error_message(); $quota = stripos($image_error, 'quota exceeded') !== false; $image_title = $quota ? 'Cota de imagem esgotada' : 'Falha na imagem'; $image_message = $quota ? 'A API informou cota zero para geração de imagens. Verifique faturamento e limites do projeto no Google AI Studio.' : $image_error; heroespet_ai_set_progress('error', 100, $image_title, $image_message); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $image_error); return array('ok' => false, 'message' => $image_message); }
+        $data = heroespet_ai_parse_json($responses['article']);
+        $image = heroespet_ai_extract_image($responses['image']);
+    }
     heroespet_ai_set_progress('running', 72, 'Validando conteúdo', 'Conferindo JSON, quantidade de palavras e dados da imagem.');
-    $data = heroespet_ai_parse_json($responses['article']);
     if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_set_progress('error', 100, 'Conteúdo inválido', 'O artigo não atingiu 1.000 palavras ou não veio em JSON.'); heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
-    $image = heroespet_ai_extract_image($responses['image']);
     if (!$image) { heroespet_ai_set_progress('error', 100, 'Imagem não recebida', 'O Gemini não retornou dados de imagem.'); heroespet_ai_log('ERROR', 'A resposta do Gemini não continha dados de imagem.'); return array('ok' => false, 'message' => 'O Gemini não retornou dados de imagem.'); }
     heroespet_ai_set_progress('running', 88, 'Publicando no WordPress', 'Salvando a imagem na mídia, definindo destaque e preenchendo o Yoast.');
     $post_id = heroespet_ai_create_post($data, $image, $topic, $opts);
@@ -325,6 +342,36 @@ function heroespet_ai_parallel_requests_retry($payloads) {
         if ($attempt < 3) sleep(5 * $attempt);
     }
     return $last;
+}
+
+function heroespet_ai_manus_generate_image($api_key, $prompt) {
+    $headers = array('Content-Type: application/json', 'x-manus-api-key: ' . $api_key);
+    $body = array('message' => array('content' => "Gere uma única imagem fotográfica profissional para capa de artigo, sem texto, sem logotipos e sem marca d'água. Use composição horizontal 16:9 e entregue a imagem como anexo da resposta. Tema: " . $prompt), 'interactive_mode' => false, 'hide_in_task_list' => true, 'share_visibility' => 'private', 'agent_profile' => 'manus-1.6-lite', 'title' => 'HeroesPet — imagem editorial');
+    $response = wp_remote_post('https://api.manus.ai/v2/task.create', array('timeout' => 60, 'headers' => $headers, 'body' => wp_json_encode($body)));
+    if (is_wp_error($response)) return new WP_Error('manus_http', $response->get_error_message());
+    $data = json_decode(wp_remote_retrieve_body($response), true); $code = wp_remote_retrieve_response_code($response);
+    if ($code >= 300 || empty($data['ok'])) return new WP_Error('manus_create', $data['error']['message'] ?? 'A API Manus recusou a tarefa.');
+    $task_id = $data['task_id'] ?? ($data['task']['id'] ?? ($data['data']['task_id'] ?? ''));
+    if (!$task_id) return new WP_Error('manus_task', 'A API Manus não retornou o identificador da tarefa.');
+    for ($attempt = 1; $attempt <= 18; $attempt++) {
+        heroespet_ai_set_progress('running', 48 + min(28, $attempt), 'Gerando imagem pela Manus', 'A tarefa Manus está processando a fotografia editorial (' . $attempt . '/18).');
+        sleep(8);
+        $poll = wp_remote_get('https://api.manus.ai/v2/task.listMessages?task_id=' . rawurlencode($task_id) . '&order=desc&limit=50', array('timeout' => 60, 'headers' => array('x-manus-api-key: ' . $api_key)));
+        if (is_wp_error($poll)) continue;
+        $messages = json_decode(wp_remote_retrieve_body($poll), true); if (!is_array($messages)) continue;
+        foreach (($messages['messages'] ?? array()) as $event) {
+            if (!empty($event['error_message']['content'])) return new WP_Error('manus_task', $event['error_message']['content']);
+            foreach (($event['assistant_message']['attachments'] ?? array()) as $attachment) {
+                if (!empty($attachment['url']) && in_array(($attachment['type'] ?? ''), array('image', 'file'), true)) {
+                    $download = wp_remote_get($attachment['url'], array('timeout' => 120));
+                    if (is_wp_error($download)) return new WP_Error('manus_download', $download->get_error_message());
+                    $bytes = wp_remote_retrieve_body($download); if (!$bytes) return new WP_Error('manus_download', 'A Manus retornou um anexo vazio.');
+                    return array('data' => $bytes, 'mime' => $attachment['content_type'] ?? 'image/png');
+                }
+            }
+        }
+    }
+    return new WP_Error('manus_timeout', 'A tarefa Manus não retornou uma imagem dentro do tempo limite.');
 }
 
 function heroespet_ai_parse_json($response) {
