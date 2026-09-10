@@ -226,7 +226,7 @@ function heroespet_ai_generate_content($manual = false) {
     heroespet_ai_set_progress('running', 45, 'Gerando artigo e imagem', 'As duas solicitações ao Gemini estão sendo processadas em paralelo.');
     $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nRetorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt. O conteúdo deve ter no mínimo 1000 palavras, usar subtítulos HTML <h2> e <h3>, parágrafos úteis e não incluir markdown fences.";
     $image_prompt = "Fotografia profissional editorial, realista e natural, relacionada ao seguinte conteúdo para um portal pet brasileiro: " . $brief . ". Pode conter pessoas e pets ou apenas pets conforme fizer sentido. Composição horizontal para capa de artigo, iluminação profissional, sem texto, sem logotipos, sem marca d'água, aspecto 16:9.";
-    $responses = heroespet_ai_parallel_requests(array(
+    $responses = heroespet_ai_parallel_requests_retry(array(
         'article' => heroespet_ai_request_payload($opts['gemini_text_key'], $opts['text_model'], $article_prompt, false),
         'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
     ));
@@ -294,6 +294,24 @@ function heroespet_ai_parallel_requests($payloads) {
     do { curl_multi_exec($mh, $running); if ($running) curl_multi_select($mh, 1); } while ($running);
     foreach ($handles as $name => $ch) { $raw = curl_multi_getcontent($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $data = json_decode($raw, true); $results[$name] = ($code >= 300 || !is_array($data)) ? new WP_Error('gemini_http', $data['error']['message'] ?? 'Erro na chamada Gemini.') : $data; curl_multi_remove_handle($mh, $ch); curl_close($ch); }
     curl_multi_close($mh); return $results;
+}
+
+function heroespet_ai_parallel_requests_retry($payloads) {
+    $last = array();
+    for ($attempt = 1; $attempt <= 3; $attempt++) {
+        $last = heroespet_ai_parallel_requests($payloads);
+        $temporary = false;
+        foreach ($last as $response) {
+            if (!is_wp_error($response)) continue;
+            $message = strtolower($response->get_error_message());
+            if (strpos($message, 'high demand') !== false || strpos($message, 'temporarily') !== false || strpos($message, '503') !== false) { $temporary = true; break; }
+        }
+        if (!$temporary) return $last;
+        heroespet_ai_log('WARNING', 'Gemini em alta demanda na geração paralela; nova tentativa ' . $attempt . ' de 3.');
+        heroespet_ai_set_progress('running', 45, 'Tentando novamente artigo e imagem', 'O Gemini está temporariamente ocupado; a próxima tentativa será feita automaticamente.');
+        if ($attempt < 3) sleep(5 * $attempt);
+    }
+    return $last;
 }
 
 function heroespet_ai_parse_json($response) {
