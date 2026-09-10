@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.0.0');
+define('HEROESPET_AI_VERSION', '1.1.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -32,18 +32,23 @@ function heroespet_ai_defaults() {
     return array(
         'gemini_text_key' => '',
         'gemini_image_key' => '',
-        'text_model' => 'gemini-2.5-flash',
+        'text_model' => 'gemini-3.6-flash',
         'image_model' => 'gemini-2.5-flash-image',
         'frequency' => 'daily',
         'publish_time' => '08:00',
         'prompt' => "Você é um jornalista especializado em mundo pet e medicina veterinária. Escreva em português do Brasil, com linguagem acolhedora, precisa e responsável. Alterne os temas automaticamente entre dicas práticas, cuidados veterinários, curiosidades e notícias relevantes da semana. Nunca invente diagnósticos, estatísticas ou fontes. Quando falar de saúde, inclua orientação para procurar um médico-veterinário. Produza título, subtítulo, artigo completo e dados SEO.",
-        'category' => 'Mundo Pet',
+        'category_id' => 0,
         'status' => 'publish',
     );
 }
 
 function heroespet_ai_get_options() {
-    return wp_parse_args((array) get_option(HEROESPET_AI_OPTION, array()), heroespet_ai_defaults());
+    $options = wp_parse_args((array) get_option(HEROESPET_AI_OPTION, array()), heroespet_ai_defaults());
+    if (($options['text_model'] ?? '') === 'gemini-2.5-flash') {
+        $options['text_model'] = 'gemini-3.6-flash';
+        update_option(HEROESPET_AI_OPTION, $options, false);
+    }
+    return $options;
 }
 
 function heroespet_ai_activate() {
@@ -66,7 +71,7 @@ function heroespet_ai_register_settings() {
         'text_model' => array('Modelo de texto', 'text'),
         'image_model' => array('Modelo de imagem', 'text'),
         'prompt' => array('Prompt editável do artigo', 'textarea'),
-        'category' => array('Categoria dos posts', 'text'),
+        'category_id' => array('Categoria dos posts', 'category'),
     );
     foreach ($fields as $key => $data) {
         add_settings_field($key, esc_html($data[0]), 'heroespet_ai_render_field', 'heroespet-ai', 'heroespet_ai_main', array('key' => $key, 'type' => $data[1]));
@@ -76,10 +81,12 @@ function heroespet_ai_register_settings() {
 function heroespet_ai_sanitize_options($input) {
     $old = heroespet_ai_get_options();
     $out = heroespet_ai_defaults();
-    foreach (array('gemini_text_key', 'gemini_image_key', 'text_model', 'image_model', 'category') as $key) {
+    foreach (array('gemini_text_key', 'gemini_image_key', 'text_model', 'image_model') as $key) {
         $value = isset($input[$key]) ? sanitize_text_field($input[$key]) : '';
         $out[$key] = ($value === '' && in_array($key, array('gemini_text_key', 'gemini_image_key'), true)) ? $old[$key] : $value;
     }
+    $legacy_category = !empty($old['category']) ? get_category_by_slug(sanitize_title($old['category'])) : null;
+    $out['category_id'] = absint($input['category_id'] ?? ($old['category_id'] ?? ($legacy_category ? $legacy_category->term_id : 0)));
     $out['prompt'] = isset($input['prompt']) ? sanitize_textarea_field($input['prompt']) : $out['prompt'];
     $out['frequency'] = in_array(($input['frequency'] ?? ''), array('daily', 'weekly', 'monthly'), true) ? $input['frequency'] : 'daily';
     $out['publish_time'] = preg_match('/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/', $input['publish_time'] ?? '') ? $input['publish_time'] : '08:00';
@@ -91,7 +98,12 @@ function heroespet_ai_sanitize_options($input) {
 function heroespet_ai_render_field($args) {
     $opts = heroespet_ai_get_options(); $key = $args['key']; $type = $args['type'];
     $value = $opts[$key] ?? '';
-    if ($type === 'textarea') {
+    if ($type === 'category') {
+        $categories = get_categories(array('hide_empty' => false, 'orderby' => 'name', 'order' => 'ASC'));
+        echo '<select name="' . esc_attr(HEROESPET_AI_OPTION) . '[category_id]" required><option value="">Selecione uma categoria</option>';
+        foreach ($categories as $category) printf('<option value="%d" %s>%s</option>', (int) $category->term_id, selected((int) $value, (int) $category->term_id, false), esc_html($category->name));
+        echo '</select><p class="description">A publicação será vinculada diretamente à categoria escolhida entre as categorias existentes no WordPress.</p>';
+    } elseif ($type === 'textarea') {
         printf('<textarea class="large-text" rows="9" name="%s[%s]">%s</textarea><p class="description">O prompt é combinado com o tema alternado e deve orientar o texto com responsabilidade editorial.</p>', esc_attr(HEROESPET_AI_OPTION), esc_attr($key), esc_textarea($value));
     } else {
         printf('<input class="regular-text" type="%s" name="%s[%s]" value="%s" autocomplete="off">', esc_attr($type), esc_attr(HEROESPET_AI_OPTION), esc_attr($key), esc_attr($value));
@@ -255,8 +267,9 @@ function heroespet_ai_create_post($data, $image, $topic, $opts) {
     $editor = wp_get_image_editor($tmp); if (!is_wp_error($editor)) { $editor->resize(1280, 720, true); $saved = $editor->save($tmp, 'image/jpeg'); if (!is_wp_error($saved)) { $tmp = $saved['path']; $ext = 'jpg'; } }
     $file = array('name' => sanitize_file_name(($data['title'] ?? 'heroespet-artigo') . '.' . $ext), 'tmp_name' => $tmp, 'type' => 'image/jpeg', 'error' => 0, 'size' => filesize($tmp));
     $attachment_id = media_handle_sideload($file, 0, $data['title'] ?? 'Imagem do artigo HeroesPet'); if (is_wp_error($attachment_id)) { @unlink($tmp); return $attachment_id; }
-    $category = get_cat_ID($opts['category']); if (!$category) $category = wp_create_category($opts['category']);
-    $post_id = wp_insert_post(wp_slash(array('post_title' => wp_strip_all_tags($data['title']), 'post_excerpt' => wp_strip_all_tags($data['excerpt'] ?? ''), 'post_content' => $data['content'], 'post_status' => $opts['status'], 'post_type' => 'post', 'post_category' => array((int) $category), 'tags_input' => array('mundo pet', 'veterinária', $topic['key']))), true);
+    $category = absint($opts['category_id'] ?? 0);
+    if (!$category || !get_category($category)) return new WP_Error('heroespet_category', 'Selecione uma categoria válida do WordPress nas configurações do plugin.');
+    $post_id = wp_insert_post(wp_slash(array('post_title' => wp_strip_all_tags($data['title']), 'post_excerpt' => wp_strip_all_tags($data['excerpt'] ?? ''), 'post_content' => $data['content'], 'post_status' => $opts['status'], 'post_type' => 'post', 'post_category' => array($category), 'tags_input' => array('mundo pet', 'veterinária', $topic['key']))), true);
     if (is_wp_error($post_id)) return $post_id;
     set_post_thumbnail($post_id, $attachment_id); wp_update_post(array('ID' => $attachment_id, 'post_parent' => $post_id)); update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field($data['image_alt'] ?? $data['title']));
     $yoast = array('_yoast_wpseo_focuskw' => $data['focus_keyword'] ?? $topic['key'], '_yoast_wpseo_title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_metadesc' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_opengraph-title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_opengraph-description' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_twitter-title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_twitter-description' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_schema_page_type' => 'WebPage', '_yoast_wpseo_schema_article_type' => 'Article'); foreach ($yoast as $key => $value) update_post_meta($post_id, $key, sanitize_text_field($value));
