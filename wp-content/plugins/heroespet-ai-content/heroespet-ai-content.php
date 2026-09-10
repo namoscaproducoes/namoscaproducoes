@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.1.0');
+define('HEROESPET_AI_VERSION', '1.2.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -238,7 +238,7 @@ function heroespet_ai_generate_content($manual = false) {
     if (is_wp_error($brief)) { heroespet_ai_set_progress('error', 100, 'Não foi possível criar o resumo', $brief->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar resumo: ' . $brief->get_error_message()); return array('ok' => false, 'message' => $brief->get_error_message()); }
     heroespet_ai_log('INFO', 'Resumo criado. Solicitando artigo e imagem em paralelo.');
     heroespet_ai_set_progress('running', 45, 'Gerando artigo e imagem', 'As duas solicitações ao Gemini estão sendo processadas em paralelo.');
-    $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nRetorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt. O conteúdo deve ter no mínimo 1000 palavras, usar subtítulos HTML <h2> e <h3>, parágrafos úteis e não incluir markdown fences.";
+    $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nREQUISITOS OBRIGATÓRIOS DE SEO E FORMATAÇÃO:\n- Retorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt.\n- O conteúdo deve ter no mínimo 1000 palavras, usar HTML sem markdown fences e conter subtítulos <h2> e <h3>.\n- Escolha uma frase-chave específica de 2 a 5 palavras em focus_keyword e use exatamente essa frase de forma natural pelo menos 4 vezes no texto.\n- Use a frase-chave no primeiro parágrafo, em pelo menos um <h2> ou <h3>, no seo_title, na meta_description e no image_alt.\n- O seo_title deve ter no máximo 55 caracteres e a meta_description entre 120 e 155 caracteres, contendo a frase-chave.\n- Inclua pelo menos 1 link interno para " . esc_url(home_url('/')) . " e pelo menos 1 link externo confiável relacionado a saúde animal, usando elementos HTML <a href=\"...\">.\n- Não invente URLs internas: use somente o endereço interno informado.\n- A imagem gerada será inserida automaticamente no topo do artigo, antes do primeiro parágrafo; não insira outra imagem no conteúdo.\n- Retorne somente o objeto JSON.";
     $image_prompt = "Fotografia profissional editorial, realista e natural, relacionada ao seguinte conteúdo para um portal pet brasileiro: " . $brief . ". Pode conter pessoas e pets ou apenas pets conforme fizer sentido. Composição horizontal para capa de artigo, iluminação profissional, sem texto, sem logotipos, sem marca d'água, aspecto 16:9.";
     if ($image_provider === 'manus') {
         $article = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], $article_prompt);
@@ -447,10 +447,30 @@ function heroespet_ai_create_post($data, $image, $topic, $opts) {
     $attachment_id = media_handle_sideload($file, 0, $data['title'] ?? 'Imagem do artigo HeroesPet'); if (is_wp_error($attachment_id)) { @unlink($tmp); return $attachment_id; }
     $category = absint($opts['category_id'] ?? 0);
     if (!$category || !get_category($category)) return new WP_Error('heroespet_category', 'Selecione uma categoria válida do WordPress nas configurações do plugin.');
-    $post_id = wp_insert_post(wp_slash(array('post_title' => wp_strip_all_tags($data['title']), 'post_excerpt' => wp_strip_all_tags($data['excerpt'] ?? ''), 'post_content' => $data['content'], 'post_status' => $opts['status'], 'post_type' => 'post', 'post_category' => array($category), 'tags_input' => array('mundo pet', 'veterinária', $topic['key']))), true);
+    $focus = sanitize_text_field($data['focus_keyword'] ?? $topic['key']);
+    $image_alt = sanitize_text_field($data['image_alt'] ?? (($focus ?: $data['title']) . ' para cães e gatos'));
+    if ($focus && stripos($image_alt, $focus) === false) $image_alt = $focus . ' — ' . $image_alt;
+    update_post_meta($attachment_id, '_wp_attachment_image_alt', $image_alt);
+    $top_image = wp_get_attachment_image($attachment_id, 'full', false, array('class' => 'heroespet-ai-featured-image', 'alt' => $image_alt, 'loading' => 'eager'));
+    $body = wp_kses_post($data['content']);
+    if ($focus) {
+        if (stripos($body, $focus) === false) $body = '<p>' . esc_html($focus) . ': ' . $body . '</p>';
+        $body = preg_replace('/(<h[23][^>]*>)(.*?)(<\/h[23]>)/is', '$1' . esc_html($focus) . ': $2$3', $body, 1);
+        $occurrences = substr_count(mb_strtolower(wp_strip_all_tags($body)), mb_strtolower($focus));
+        if ($occurrences < 4) $body .= '<p>Ao longo deste guia, você encontrará orientações práticas sobre ' . esc_html($focus) . ' para aplicar com segurança na rotina.</p>';
+    }
+    $content = $top_image . "\n\n" . $body;
+    if (stripos($content, esc_url(home_url('/'))) === false) $content .= '<p>Veja mais conteúdos no <a href="' . esc_url(home_url('/')) . '">' . esc_html(get_bloginfo('name')) . '</a>. ';
+    else $content .= '<p>';
+    if (stripos($content, 'avma.org') === false) $content .= 'Para referência veterinária, consulte também a <a href="https://www.avma.org/resources-tools/pet-owners" target="_blank" rel="noopener noreferrer">American Veterinary Medical Association</a>.';
+    $content .= '</p>';
+    $post_id = wp_insert_post(wp_slash(array('post_title' => wp_strip_all_tags($data['title']), 'post_excerpt' => wp_strip_all_tags($data['excerpt'] ?? ''), 'post_content' => $content, 'post_status' => $opts['status'], 'post_type' => 'post', 'post_category' => array($category), 'tags_input' => array('mundo pet', 'veterinária', $topic['key']))), true);
     if (is_wp_error($post_id)) return $post_id;
-    set_post_thumbnail($post_id, $attachment_id); wp_update_post(array('ID' => $attachment_id, 'post_parent' => $post_id)); update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field($data['image_alt'] ?? $data['title']));
-    $yoast = array('_yoast_wpseo_focuskw' => $data['focus_keyword'] ?? $topic['key'], '_yoast_wpseo_title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_metadesc' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_opengraph-title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_opengraph-description' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_twitter-title' => $data['seo_title'] ?? $data['title'], '_yoast_wpseo_twitter-description' => $data['meta_description'] ?? $data['excerpt'], '_yoast_wpseo_schema_page_type' => 'WebPage', '_yoast_wpseo_schema_article_type' => 'Article'); foreach ($yoast as $key => $value) update_post_meta($post_id, $key, sanitize_text_field($value));
+    set_post_thumbnail($post_id, $attachment_id); wp_update_post(array('ID' => $attachment_id, 'post_parent' => $post_id));
+    $seo_title = wp_trim_words(sanitize_text_field($data['seo_title'] ?? $data['title']), 9, ''); if (mb_strlen($seo_title) > 55) $seo_title = mb_substr($seo_title, 0, 52) . '...';
+    $meta = sanitize_text_field($data['meta_description'] ?? $data['excerpt']); if (mb_strlen($meta) > 155) $meta = mb_substr($meta, 0, 152) . '...';
+    if ($focus && stripos($meta, $focus) === false) $meta = mb_substr($focus . ': ' . $meta, 0, 155);
+    $yoast = array('_yoast_wpseo_focuskw' => $focus, '_yoast_wpseo_title' => $seo_title, '_yoast_wpseo_metadesc' => $meta, '_yoast_wpseo_opengraph-title' => $seo_title, '_yoast_wpseo_opengraph-description' => $meta, '_yoast_wpseo_twitter-title' => $seo_title, '_yoast_wpseo_twitter-description' => $meta, '_yoast_wpseo_schema_page_type' => 'WebPage', '_yoast_wpseo_schema_article_type' => 'Article'); foreach ($yoast as $key => $value) update_post_meta($post_id, $key, sanitize_text_field($value));
     return $post_id;
 }
 

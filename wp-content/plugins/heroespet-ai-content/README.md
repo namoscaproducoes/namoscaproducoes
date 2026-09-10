@@ -27,6 +27,7 @@ Ao usar Manus para a imagem, a chave Gemini de imagem deixa de ser necessária; 
 - A categoria é carregada diretamente de `get_categories()` e precisa ser selecionada no painel; o plugin não cria uma categoria paralela nem publica em uma categoria textual aproximada.
 - A chamada paralela usa cURL multi quando disponível. Caso o servidor não tenha a extensão cURL, o plugin usa automaticamente o transporte HTTP nativo do WordPress.
 - O preenchimento de Yoast grava foco, título SEO, meta description, Open Graph, Twitter e tipo de esquema. A cor verde final depende também da versão/configuração do Yoast e de sua análise interna.
+- O prompt exige frase-chave no primeiro parágrafo, subtítulos, metadados e texto pelo menos quatro vezes; inclui link interno e link externo confiável; limita título/meta description; define alt text com a frase-chave; e insere automaticamente a imagem gerada no topo do artigo antes do primeiro parágrafo.
 - O botão **Gerar e publicar agora** respeita o status padrão: pode publicar ou salvar como rascunho.
 - O painel administrativo exibe uma barra de progresso com as etapas de fila, resumo, geração paralela, validação e publicação; ele consulta o status automaticamente sem manter a requisição do navegador aberta.
 - Erros temporários do Gemini, como alta demanda, indisponibilidade temporária ou HTTP 503, recebem até três tentativas automáticas com espera progressiva.
