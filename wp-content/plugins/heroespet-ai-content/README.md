@@ -11,6 +11,8 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 5. Selecione uma das categorias já criadas no WordPress; o post será publicado diretamente nela.
 6. Selecione diário, semanal ou mensal, escolha um horário em intervalos de 15 minutos, defina o status padrão e salve.
 
+Quando **Semanal** estiver selecionado, marque vários dias na grade **Publicações semanais** e escolha o horário de cada um. Por exemplo, é possível configurar segunda-feira às 10:00 e sexta-feira às 09:00; o plugin agenda sempre o próximo dia/horário válido.
+
 ### Geração de imagem pela Manus
 
 Informe a chave no campo **Chave da API Manus para imagem**. A chave é enviada somente no cabeçalho `x-manus-api-key`, não é incorporada ao código e é armazenada nas opções protegidas do WordPress. O plugin cria uma tarefa privada na API Manus v2, aguarda o anexo da imagem, baixa o arquivo e continua com o redimensionamento para 1280×720 e a publicação no WordPress.

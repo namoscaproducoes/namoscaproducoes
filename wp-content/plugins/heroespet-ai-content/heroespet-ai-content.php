@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.3.0');
+define('HEROESPET_AI_VERSION', '1.4.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -37,6 +37,7 @@ function heroespet_ai_defaults() {
         'text_model' => 'gemini-3.6-flash',
         'frequency' => 'daily',
         'publish_time' => '08:00',
+        'weekly_slots' => array(1 => '10:00'),
         'prompt' => "Você é um jornalista especializado em mundo pet e medicina veterinária. Escreva em português do Brasil, com linguagem acolhedora, precisa e responsável. Alterne os temas automaticamente entre dicas práticas, cuidados veterinários, curiosidades e notícias relevantes da semana. Nunca invente diagnósticos, estatísticas ou fontes. Quando falar de saúde, inclua orientação para procurar um médico-veterinário. Produza título, subtítulo, artigo completo e dados SEO.",
         'category_id' => 0,
         'status' => 'publish',
@@ -87,6 +88,10 @@ function heroespet_ai_sanitize_options($input) {
     }
     $legacy_category = !empty($old['category']) ? get_category_by_slug(sanitize_title($old['category'])) : null;
     $out['category_id'] = absint($input['category_id'] ?? ($old['category_id'] ?? ($legacy_category ? $legacy_category->term_id : 0)));
+    $out['weekly_slots'] = array();
+    $enabled = isset($input['weekly_enabled']) && is_array($input['weekly_enabled']) ? $input['weekly_enabled'] : array();
+    $submitted_slots = isset($input['weekly_slots']) && is_array($input['weekly_slots']) ? $input['weekly_slots'] : array();
+    foreach (range(1, 7) as $day) if (!empty($enabled[$day]) && preg_match('/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/', $submitted_slots[$day] ?? '')) $out['weekly_slots'][$day] = $submitted_slots[$day];
     $out['prompt'] = isset($input['prompt']) ? sanitize_textarea_field($input['prompt']) : $out['prompt'];
     $out['frequency'] = in_array(($input['frequency'] ?? ''), array('daily', 'weekly', 'monthly'), true) ? $input['frequency'] : 'daily';
     $out['publish_time'] = preg_match('/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/', $input['publish_time'] ?? '') ? $input['publish_time'] : '08:00';
@@ -119,6 +124,7 @@ function heroespet_ai_settings_page() {
     if (!current_user_can('manage_options')) return;
     $opts = heroespet_ai_get_options(); $logs = get_option(HEROESPET_AI_LOG_OPTION, array());
     $times = array(); for ($h = 0; $h < 24; $h++) { foreach (array(0,15,30,45) as $m) $times[] = sprintf('%02d:%02d', $h, $m); }
+    $weekdays = array(1 => 'Segunda-feira', 2 => 'Terça-feira', 3 => 'Quarta-feira', 4 => 'Quinta-feira', 5 => 'Sexta-feira', 6 => 'Sábado', 7 => 'Domingo');
     ?>
     <div class="wrap">
       <h1>HeroesPet AI Content <small style="font-size:13px;color:#666">v<?php echo esc_html(HEROESPET_AI_VERSION); ?></small></h1>
@@ -127,7 +133,8 @@ function heroespet_ai_settings_page() {
       <form method="post" action="options.php">
         <?php settings_fields('heroespet_ai_settings'); do_settings_sections('heroespet-ai'); ?>
         <table class="form-table"><tr><th>Frequência</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[frequency]"><option value="daily" <?php selected($opts['frequency'], 'daily'); ?>>Diário</option><option value="weekly" <?php selected($opts['frequency'], 'weekly'); ?>>Semanal</option><option value="monthly" <?php selected($opts['frequency'], 'monthly'); ?>>Mensal</option></select></td></tr>
-        <tr><th>Horário de publicação</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[publish_time]"><?php foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($opts['publish_time'], $time, false), esc_html($time)); ?></select><p class="description">O horário usa o fuso configurado em Configurações &gt; Geral.</p></td></tr>
+        <tr><th>Horário de publicação</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[publish_time]"><?php foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($opts['publish_time'], $time, false), esc_html($time)); ?></select><p class="description">Usado para Diário e Mensal. O fuso é o definido em Configurações &gt; Geral.</p></td></tr>
+        <tr><th>Publicações semanais</th><td><p>Marque quantos dias quiser e escolha um horário individual para cada dia. Esta grade é usada quando a frequência está definida como <strong>Semanal</strong>.</p><?php foreach ($weekdays as $day => $label) { $slot = $opts['weekly_slots'][$day] ?? ''; echo '<label style="display:block;margin:7px 0"><input type="checkbox" name="' . esc_attr(HEROESPET_AI_OPTION) . '[weekly_enabled][' . (int) $day . ']" value="1" ' . checked($slot !== '', true, false) . '> ' . esc_html($label) . ' <select name="' . esc_attr(HEROESPET_AI_OPTION) . '[weekly_slots][' . (int) $day . ']">'; foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($slot ?: '08:00', $time, false), esc_html($time)); echo '</select></label>'; } ?></td></tr>
         <tr><th>Status padrão</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[status]"><option value="publish" <?php selected($opts['status'], 'publish'); ?>>Publicar automaticamente</option><option value="draft" <?php selected($opts['status'], 'draft'); ?>>Salvar como rascunho</option></select></td></tr></table>
         <?php submit_button('Salvar configurações'); ?>
       </form>
@@ -144,11 +151,19 @@ function heroespet_ai_settings_page() {
 function heroespet_ai_reschedule($options = null) {
     $opts = $options ?: heroespet_ai_get_options();
     wp_clear_scheduled_hook(HEROESPET_AI_CRON_HOOK);
-    $timestamp = heroespet_ai_next_timestamp($opts['publish_time'], $opts['frequency']);
+    $timestamp = heroespet_ai_next_timestamp($opts['publish_time'], $opts['frequency'], $opts['weekly_slots'] ?? array());
     if ($timestamp) wp_schedule_single_event($timestamp, HEROESPET_AI_CRON_HOOK);
 }
 
-function heroespet_ai_next_timestamp($time, $frequency) {
+function heroespet_ai_next_timestamp($time, $frequency, $weekly_slots = array()) {
+    if ($frequency === 'weekly') {
+        $slots = $weekly_slots ?: (heroespet_ai_get_options()['weekly_slots'] ?? array());
+        if ($slots) {
+            $now = current_time('timestamp'); $best = 0; $today = (int) date('N', $now);
+            foreach ($slots as $day => $slot) { list($hour, $minute) = array_map('intval', explode(':', $slot)); $delta = ((int) $day - $today + 7) % 7; $candidate = mktime($hour, $minute, 0, (int) date('n', $now), (int) date('j', $now) + $delta, (int) date('Y', $now)); if ($candidate <= $now) $candidate = strtotime('+7 days', $candidate); if (!$best || $candidate < $best) $best = $candidate; }
+            return $best;
+        }
+    }
     list($hour, $minute) = array_map('intval', explode(':', $time));
     $now = current_time('timestamp'); $candidate = mktime($hour, $minute, 0, (int) date('n', $now), (int) date('j', $now), (int) date('Y', $now));
     if ($candidate <= $now) $candidate = strtotime('+1 day', $candidate);
