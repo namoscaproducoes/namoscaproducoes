@@ -359,7 +359,7 @@ function heroespet_ai_parallel_requests_retry($payloads) {
 }
 
 function heroespet_ai_manus_generate_image($api_key, $prompt) {
-    $headers = array('Content-Type: application/json', 'x-manus-api-key: ' . $api_key);
+    $headers = array('Content-Type' => 'application/json', 'x-manus-api-key' => $api_key);
     $body = array('message' => array('content' => "Gere uma única imagem fotográfica profissional para capa de artigo, sem texto, sem logotipos e sem marca d'água. Use composição horizontal 16:9 e entregue a imagem como anexo da resposta. Tema: " . $prompt), 'interactive_mode' => false, 'hide_in_task_list' => true, 'share_visibility' => 'private', 'agent_profile' => 'manus-1.6-lite', 'title' => 'HeroesPet — imagem editorial');
     $response = wp_remote_post('https://api.manus.ai/v2/task.create', array('timeout' => 60, 'headers' => $headers, 'body' => wp_json_encode($body)));
     if (is_wp_error($response)) return new WP_Error('manus_http', $response->get_error_message());
@@ -370,7 +370,7 @@ function heroespet_ai_manus_generate_image($api_key, $prompt) {
     for ($attempt = 1; $attempt <= 18; $attempt++) {
         heroespet_ai_set_progress('running', 48 + min(28, $attempt), 'Gerando imagem pela Manus', 'A tarefa Manus está processando a fotografia editorial (' . $attempt . '/18).');
         sleep(8);
-        $poll = wp_remote_get('https://api.manus.ai/v2/task.listMessages?task_id=' . rawurlencode($task_id) . '&order=desc&limit=50', array('timeout' => 60, 'headers' => array('x-manus-api-key: ' . $api_key)));
+        $poll = wp_remote_get('https://api.manus.ai/v2/task.listMessages?task_id=' . rawurlencode($task_id) . '&order=desc&limit=50', array('timeout' => 60, 'headers' => array('x-manus-api-key' => $api_key)));
         if (is_wp_error($poll)) continue;
         $messages = json_decode(wp_remote_retrieve_body($poll), true); if (!is_array($messages)) continue;
         foreach (($messages['messages'] ?? array()) as $event) {
