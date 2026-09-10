@@ -156,15 +156,27 @@ function heroespet_ai_next_timestamp($time, $frequency) {
 }
 
 function heroespet_ai_cron_generate() {
+    if (get_transient('heroespet_ai_generation_lock')) {
+        heroespet_ai_log('WARNING', 'Geração ignorada porque já existe outra execução em andamento.');
+        heroespet_ai_reschedule();
+        return;
+    }
+    set_transient('heroespet_ai_generation_lock', 1, 15 * MINUTE_IN_SECONDS);
     heroespet_ai_generate_content(false);
+    delete_transient('heroespet_ai_generation_lock');
     heroespet_ai_reschedule();
 }
 
 function heroespet_ai_generate_now() {
     if (!current_user_can('manage_options')) wp_die('Sem permissão.');
     check_admin_referer('heroespet_ai_generate_now');
-    $result = heroespet_ai_generate_content(true);
-    $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => $result['ok'] ? 'success' : 'error', 'heroespet_ai_message' => rawurlencode($result['message'])), admin_url('admin.php'));
+    if (get_transient('heroespet_ai_generation_lock')) {
+        $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => 'error', 'heroespet_ai_message' => rawurlencode('Já existe uma geração em andamento. Aguarde o log ser atualizado.')), admin_url('admin.php'));
+        wp_safe_redirect($url); exit;
+    }
+    wp_schedule_single_event(time() + 5, HEROESPET_AI_CRON_HOOK);
+    heroespet_ai_log('INFO', 'Geração manual enfileirada para execução em segundo plano.');
+    $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => 'success', 'heroespet_ai_message' => rawurlencode('Geração enfileirada. O artigo será criado em segundo plano; acompanhe o log nesta tela.')), admin_url('admin.php'));
     wp_safe_redirect($url); exit;
 }
 
