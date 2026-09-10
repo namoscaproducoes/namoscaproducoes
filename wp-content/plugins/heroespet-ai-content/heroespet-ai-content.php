@@ -25,6 +25,7 @@ add_action('admin_menu', 'heroespet_ai_admin_menu');
 add_action('admin_init', 'heroespet_ai_register_settings');
 add_action('admin_post_heroespet_ai_generate_now', 'heroespet_ai_generate_now');
 add_action('admin_post_heroespet_ai_clear_logs', 'heroespet_ai_clear_logs');
+add_action('wp_ajax_heroespet_ai_progress', 'heroespet_ai_progress_ajax');
 add_action(HEROESPET_AI_CRON_HOOK, 'heroespet_ai_cron_generate');
 add_action('admin_notices', 'heroespet_ai_admin_notice');
 
@@ -133,6 +134,8 @@ function heroespet_ai_settings_page() {
       </form>
       <hr><h2>Publicar agora</h2><p>O processo cria primeiro um resumo editorial; depois solicita simultaneamente o artigo e a imagem ao Gemini, salva a imagem na biblioteca e define a imagem destacada.</p>
       <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('heroespet_ai_generate_now'); ?><input type="hidden" name="action" value="heroespet_ai_generate_now"><?php submit_button('Gerar e publicar agora', 'primary'); ?></form>
+      <div id="heroespet-ai-progress" style="display:none;max-width:720px;margin:18px 0;padding:16px;border:1px solid #dcdcde;border-radius:8px;background:#fff"><strong id="heroespet-ai-progress-title">Aguardando...</strong><div style="height:12px;background:#e2e8f0;border-radius:8px;overflow:hidden;margin:12px 0 8px"><div id="heroespet-ai-progress-bar" style="height:100%;width:0%;background:#2271b1;transition:width .5s ease"></div></div><span id="heroespet-ai-progress-message" style="color:#50575e">Acompanhe o processamento nesta tela.</span></div>
+      <script>(function(){const box=document.getElementById('heroespet-ai-progress'),bar=document.getElementById('heroespet-ai-progress-bar'),title=document.getElementById('heroespet-ai-progress-title'),message=document.getElementById('heroespet-ai-progress-message');if(!box)return;function poll(){fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php?action=heroespet_ai_progress&_ajax_nonce=' . wp_create_nonce('heroespet_ai_progress'))); ?>,{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(!d.success||!d.data)return;const p=d.data;if(p.status&&p.status!=='idle'){box.style.display='block';bar.style.width=(p.percent||0)+'%';title.textContent=p.title||'Processando...';message.textContent=p.message||'';}if(['success','error'].indexOf(p.status)>=0){bar.style.background=p.status==='success'?'#00a32a':'#d63638';}else{setTimeout(poll,3000);}}).catch(function(){setTimeout(poll,5000);});}poll();})();</script>
       <hr><h2>Log de operações</h2><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('heroespet_ai_clear_logs'); ?><input type="hidden" name="action" value="heroespet_ai_clear_logs"><?php submit_button('Limpar log', 'secondary', 'submit', array('onclick' => "return confirm('Limpar todo o log?');")); ?></form>
       <div style="max-height:420px;overflow:auto;margin-top:12px"><table class="widefat striped"><thead><tr><th>Data</th><th>Nível</th><th>Mensagem</th></tr></thead><tbody><?php if (!$logs) echo '<tr><td colspan="3">Nenhum registro.</td></tr>'; foreach (array_reverse($logs) as $log) printf('<tr><td>%s</td><td>%s</td><td>%s</td></tr>', esc_html($log['time']), esc_html($log['level']), esc_html($log['message'])); ?></tbody></table></div>
     </div>
@@ -175,6 +178,7 @@ function heroespet_ai_generate_now() {
         wp_safe_redirect($url); exit;
     }
     wp_schedule_single_event(time() + 5, HEROESPET_AI_CRON_HOOK);
+    heroespet_ai_set_progress('queued', 5, 'Publicação na fila', 'A geração começará em segundo plano em alguns segundos.');
     heroespet_ai_log('INFO', 'Geração manual enfileirada para execução em segundo plano.');
     $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => 'success', 'heroespet_ai_message' => rawurlencode('Geração enfileirada. O artigo será criado em segundo plano; acompanhe o log nesta tela.')), admin_url('admin.php'));
     wp_safe_redirect($url); exit;
@@ -184,6 +188,16 @@ function heroespet_ai_clear_logs() {
     if (!current_user_can('manage_options')) wp_die('Sem permissão.');
     check_admin_referer('heroespet_ai_clear_logs'); delete_option(HEROESPET_AI_LOG_OPTION);
     wp_safe_redirect(admin_url('admin.php?page=heroespet-ai')); exit;
+}
+
+function heroespet_ai_set_progress($status, $percent, $title, $message) {
+    set_transient('heroespet_ai_progress', array('status' => $status, 'percent' => (int) $percent, 'title' => $title, 'message' => $message, 'updated' => time()), 30 * MINUTE_IN_SECONDS);
+}
+
+function heroespet_ai_progress_ajax() {
+    check_ajax_referer('heroespet_ai_progress');
+    if (!current_user_can('manage_options')) wp_send_json_error(array('message' => 'Sem permissão.'), 403);
+    wp_send_json_success(get_transient('heroespet_ai_progress') ?: array('status' => 'idle', 'percent' => 0, 'title' => '', 'message' => ''));
 }
 
 function heroespet_ai_admin_notice() {
@@ -201,27 +215,33 @@ function heroespet_ai_log($level, $message) {
 
 function heroespet_ai_generate_content($manual = false) {
     $opts = heroespet_ai_get_options();
-    if (!$opts['gemini_text_key'] || !$opts['gemini_image_key']) { heroespet_ai_log('ERROR', 'As duas chaves Gemini precisam estar configuradas.'); return array('ok' => false, 'message' => 'Configure as duas chaves Gemini antes de gerar.'); }
+    heroespet_ai_set_progress('running', 10, 'Preparando publicação', 'Validando configurações e escolhendo o próximo tema.');
+    if (!$opts['gemini_text_key'] || !$opts['gemini_image_key']) { heroespet_ai_set_progress('error', 100, 'Configuração incompleta', 'Configure as duas chaves Gemini.'); heroespet_ai_log('ERROR', 'As duas chaves Gemini precisam estar configuradas.'); return array('ok' => false, 'message' => 'Configure as duas chaves Gemini antes de gerar.'); }
     $topic = heroespet_ai_pick_topic();
     heroespet_ai_log('INFO', 'Início da geração: ' . $topic['label']);
-    $brief = heroespet_ai_call_text($opts['gemini_text_key'], $opts['text_model'], 'Crie apenas um resumo editorial de 45 a 70 palavras para um conteúdo sobre ' . $topic['label'] . '. Inclua o ângulo principal, público e cuidados editoriais. Retorne somente o resumo.');
-    if (is_wp_error($brief)) { heroespet_ai_log('ERROR', 'Falha ao criar resumo: ' . $brief->get_error_message()); return array('ok' => false, 'message' => $brief->get_error_message()); }
+    heroespet_ai_set_progress('running', 20, 'Criando resumo editorial', 'O Gemini está preparando o briefing que será usado no texto e na imagem.');
+    $brief = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], 'Crie apenas um resumo editorial de 45 a 70 palavras para um conteúdo sobre ' . $topic['label'] . '. Inclua o ângulo principal, público e cuidados editoriais. Retorne somente o resumo.');
+    if (is_wp_error($brief)) { heroespet_ai_set_progress('error', 100, 'Não foi possível criar o resumo', $brief->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar resumo: ' . $brief->get_error_message()); return array('ok' => false, 'message' => $brief->get_error_message()); }
     heroespet_ai_log('INFO', 'Resumo criado. Solicitando artigo e imagem em paralelo.');
+    heroespet_ai_set_progress('running', 45, 'Gerando artigo e imagem', 'As duas solicitações ao Gemini estão sendo processadas em paralelo.');
     $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nRetorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt. O conteúdo deve ter no mínimo 1000 palavras, usar subtítulos HTML <h2> e <h3>, parágrafos úteis e não incluir markdown fences.";
     $image_prompt = "Fotografia profissional editorial, realista e natural, relacionada ao seguinte conteúdo para um portal pet brasileiro: " . $brief . ". Pode conter pessoas e pets ou apenas pets conforme fizer sentido. Composição horizontal para capa de artigo, iluminação profissional, sem texto, sem logotipos, sem marca d'água, aspecto 16:9.";
     $responses = heroespet_ai_parallel_requests(array(
         'article' => heroespet_ai_request_payload($opts['gemini_text_key'], $opts['text_model'], $article_prompt, false),
         'image' => heroespet_ai_request_payload($opts['gemini_image_key'], $opts['image_model'], $image_prompt, true),
     ));
-    if (is_wp_error($responses['article'])) { heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
-    if (is_wp_error($responses['image'])) { heroespet_ai_log('ERROR', 'Falha na imagem: ' . $responses['image']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração da imagem.'); }
+    if (is_wp_error($responses['article'])) { heroespet_ai_set_progress('error', 100, 'Falha no artigo', $responses['article']->get_error_message()); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $responses['article']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração do artigo.'); }
+    if (is_wp_error($responses['image'])) { heroespet_ai_set_progress('error', 100, 'Falha na imagem', $responses['image']->get_error_message()); heroespet_ai_log('ERROR', 'Falha na imagem: ' . $responses['image']->get_error_message()); return array('ok' => false, 'message' => 'Falha na geração da imagem.'); }
+    heroespet_ai_set_progress('running', 72, 'Validando conteúdo', 'Conferindo JSON, quantidade de palavras e dados da imagem.');
     $data = heroespet_ai_parse_json($responses['article']);
-    if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
+    if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_set_progress('error', 100, 'Conteúdo inválido', 'O artigo não atingiu 1.000 palavras ou não veio em JSON.'); heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
     $image = heroespet_ai_extract_image($responses['image']);
-    if (!$image) { heroespet_ai_log('ERROR', 'A resposta do Gemini não continha dados de imagem.'); return array('ok' => false, 'message' => 'O Gemini não retornou dados de imagem.'); }
+    if (!$image) { heroespet_ai_set_progress('error', 100, 'Imagem não recebida', 'O Gemini não retornou dados de imagem.'); heroespet_ai_log('ERROR', 'A resposta do Gemini não continha dados de imagem.'); return array('ok' => false, 'message' => 'O Gemini não retornou dados de imagem.'); }
+    heroespet_ai_set_progress('running', 88, 'Publicando no WordPress', 'Salvando a imagem na mídia, definindo destaque e preenchendo o Yoast.');
     $post_id = heroespet_ai_create_post($data, $image, $topic, $opts);
-    if (is_wp_error($post_id)) { heroespet_ai_log('ERROR', 'Falha ao criar post: ' . $post_id->get_error_message()); return array('ok' => false, 'message' => $post_id->get_error_message()); }
+    if (is_wp_error($post_id)) { heroespet_ai_set_progress('error', 100, 'Falha na publicação', $post_id->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar post: ' . $post_id->get_error_message()); return array('ok' => false, 'message' => $post_id->get_error_message()); }
     heroespet_ai_log('SUCCESS', 'Post #' . $post_id . ' criado com artigo, mídia, imagem destacada e campos Yoast.');
+    heroespet_ai_set_progress('success', 100, 'Publicação concluída', 'Post #' . $post_id . ' criado com sucesso.');
     return array('ok' => true, 'message' => 'Post #' . $post_id . ' criado com sucesso.');
 }
 
@@ -238,6 +258,19 @@ function heroespet_ai_pick_topic() {
 function heroespet_ai_request_payload($key, $model, $prompt, $image) {
     $generation = $image ? array('responseModalities' => array('IMAGE'), 'imageConfig' => array('aspectRatio' => '16:9')) : array('responseMimeType' => 'application/json', 'temperature' => 0.7, 'maxOutputTokens' => 8192);
     return array('url' => 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent?key=' . rawurlencode($key), 'body' => array('contents' => array(array('role' => 'user', 'parts' => array(array('text' => $prompt)))), 'generationConfig' => $generation));
+}
+
+function heroespet_ai_call_text_retry($key, $model, $prompt) {
+    $last = null;
+    for ($attempt = 1; $attempt <= 3; $attempt++) {
+        $last = heroespet_ai_call_text($key, $model, $prompt);
+        if (!is_wp_error($last)) return $last;
+        $message = strtolower($last->get_error_message());
+        if (strpos($message, 'high demand') === false && strpos($message, 'temporarily') === false && strpos($message, '503') === false) return $last;
+        heroespet_ai_log('WARNING', 'Gemini em alta demanda; nova tentativa ' . $attempt . ' de 3.');
+        if ($attempt < 3) sleep(4 * $attempt);
+    }
+    return $last;
 }
 
 function heroespet_ai_call_text($key, $model, $prompt) {

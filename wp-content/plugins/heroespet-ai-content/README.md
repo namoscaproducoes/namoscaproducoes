@@ -19,4 +19,6 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 - A chamada paralela usa cURL multi quando disponível. Caso o servidor não tenha a extensão cURL, o plugin usa automaticamente o transporte HTTP nativo do WordPress.
 - O preenchimento de Yoast grava foco, título SEO, meta description, Open Graph, Twitter e tipo de esquema. A cor verde final depende também da versão/configuração do Yoast e de sua análise interna.
 - O botão **Gerar e publicar agora** respeita o status padrão: pode publicar ou salvar como rascunho.
+- O painel administrativo exibe uma barra de progresso com as etapas de fila, resumo, geração paralela, validação e publicação; ele consulta o status automaticamente sem manter a requisição do navegador aberta.
+- Erros temporários do Gemini, como alta demanda, indisponibilidade temporária ou HTTP 503, recebem até três tentativas automáticas com espera progressiva.
 - O log mantém os 200 registros mais recentes e pode ser limpo no painel.
