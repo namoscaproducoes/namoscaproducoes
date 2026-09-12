@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.4.0');
+define('HEROESPET_AI_VERSION', '1.5.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -138,7 +138,7 @@ function heroespet_ai_settings_page() {
         <tr><th>Status padrão</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[status]"><option value="publish" <?php selected($opts['status'], 'publish'); ?>>Publicar automaticamente</option><option value="draft" <?php selected($opts['status'], 'draft'); ?>>Salvar como rascunho</option></select></td></tr></table>
         <?php submit_button('Salvar configurações'); ?>
       </form>
-      <hr><h2>Publicar agora</h2><p>O processo cria primeiro um resumo editorial; depois solicita simultaneamente o artigo e a imagem ao Gemini, salva a imagem na biblioteca e define a imagem destacada.</p>
+      <hr><h2>Publicar agora</h2><p>O processo cria primeiro um resumo editorial; depois gera o artigo com o Gemini e a imagem exclusivamente com a Manus, salva a imagem na biblioteca e define a imagem destacada.</p>
       <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('heroespet_ai_generate_now'); ?><input type="hidden" name="action" value="heroespet_ai_generate_now"><?php submit_button('Gerar e publicar agora', 'primary'); ?></form>
       <div id="heroespet-ai-progress" style="display:none;max-width:720px;margin:18px 0;padding:16px;border:1px solid #dcdcde;border-radius:8px;background:#fff"><strong id="heroespet-ai-progress-title">Aguardando...</strong><div style="height:12px;background:#e2e8f0;border-radius:8px;overflow:hidden;margin:12px 0 8px"><div id="heroespet-ai-progress-bar" style="height:100%;width:0%;background:#2271b1;transition:width .5s ease"></div></div><span id="heroespet-ai-progress-message" style="color:#50575e">Acompanhe o processamento nesta tela.</span></div>
       <script>(function(){const box=document.getElementById('heroespet-ai-progress'),bar=document.getElementById('heroespet-ai-progress-bar'),title=document.getElementById('heroespet-ai-progress-title'),message=document.getElementById('heroespet-ai-progress-message');if(!box)return;function poll(){fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php?action=heroespet_ai_progress&_ajax_nonce=' . wp_create_nonce('heroespet_ai_progress'))); ?>,{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(!d.success||!d.data)return;const p=d.data;if(p.status&&p.status!=='idle'){box.style.display='block';bar.style.width=(p.percent||0)+'%';title.textContent=p.title||'Processando...';message.textContent=p.message||'';}if(['success','error'].indexOf(p.status)>=0){bar.style.background=p.status==='success'?'#00a32a':'#d63638';}else{setTimeout(poll,3000);}}).catch(function(){setTimeout(poll,5000);});}poll();})();</script>
@@ -152,24 +152,33 @@ function heroespet_ai_reschedule($options = null) {
     $opts = $options ?: heroespet_ai_get_options();
     wp_clear_scheduled_hook(HEROESPET_AI_CRON_HOOK);
     $timestamp = heroespet_ai_next_timestamp($opts['publish_time'], $opts['frequency'], $opts['weekly_slots'] ?? array());
-    if ($timestamp) wp_schedule_single_event($timestamp, HEROESPET_AI_CRON_HOOK);
+    if ($timestamp) { wp_schedule_single_event($timestamp, HEROESPET_AI_CRON_HOOK); heroespet_ai_log('INFO', 'Próxima publicação agendada para ' . wp_date('Y-m-d H:i:s', $timestamp) . ' (' . wp_timezone_string() . ').'); }
+}
+
+function heroespet_ai_schedule_retry($message) {
+    $text = strtolower((string) $message);
+    if (strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
+    wp_schedule_single_event(time() + 15 * MINUTE_IN_SECONDS, HEROESPET_AI_CRON_HOOK);
+    heroespet_ai_log('WARNING', 'Falha temporária detectada; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', time() + 15 * MINUTE_IN_SECONDS) . ' (' . wp_timezone_string() . ').');
 }
 
 function heroespet_ai_next_timestamp($time, $frequency, $weekly_slots = array()) {
+    $timezone = wp_timezone();
+    $now = new DateTimeImmutable('now', $timezone);
     if ($frequency === 'weekly') {
         $slots = $weekly_slots ?: (heroespet_ai_get_options()['weekly_slots'] ?? array());
         if ($slots) {
-            $now = current_time('timestamp'); $best = 0; $today = (int) date('N', $now);
-            foreach ($slots as $day => $slot) { list($hour, $minute) = array_map('intval', explode(':', $slot)); $delta = ((int) $day - $today + 7) % 7; $candidate = mktime($hour, $minute, 0, (int) date('n', $now), (int) date('j', $now) + $delta, (int) date('Y', $now)); if ($candidate <= $now) $candidate = strtotime('+7 days', $candidate); if (!$best || $candidate < $best) $best = $candidate; }
+            $best = 0; $today = (int) $now->format('N');
+            foreach ($slots as $day => $slot) { list($hour, $minute) = array_map('intval', explode(':', $slot)); $delta = ((int) $day - $today + 7) % 7; $candidate = $now->setTime($hour, $minute, 0)->modify('+' . $delta . ' days'); if ($candidate <= $now) $candidate = $candidate->modify('+7 days'); if (!$best || $candidate->getTimestamp() < $best) $best = $candidate->getTimestamp(); }
             return $best;
         }
     }
     list($hour, $minute) = array_map('intval', explode(':', $time));
-    $now = current_time('timestamp'); $candidate = mktime($hour, $minute, 0, (int) date('n', $now), (int) date('j', $now), (int) date('Y', $now));
-    if ($candidate <= $now) $candidate = strtotime('+1 day', $candidate);
-    if ($frequency === 'weekly') $candidate = strtotime('+6 days', $candidate);
-    if ($frequency === 'monthly') $candidate = strtotime('+1 month', $candidate);
-    return $candidate;
+    $candidate = $now->setTime($hour, $minute, 0);
+    if ($candidate <= $now) $candidate = $candidate->modify('+1 day');
+    if ($frequency === 'weekly') $candidate = $candidate->modify('+6 days');
+    if ($frequency === 'monthly') $candidate = $candidate->modify('+1 month');
+    return $candidate->getTimestamp();
 }
 
 function heroespet_ai_cron_generate() {
@@ -179,9 +188,10 @@ function heroespet_ai_cron_generate() {
         return;
     }
     set_transient('heroespet_ai_generation_lock', 1, 15 * MINUTE_IN_SECONDS);
-    heroespet_ai_generate_content(false);
+    $result = heroespet_ai_generate_content(false);
     delete_transient('heroespet_ai_generation_lock');
     heroespet_ai_reschedule();
+    if (is_array($result) && empty($result['ok'])) heroespet_ai_schedule_retry($result['message'] ?? '');
 }
 
 function heroespet_ai_generate_now() {

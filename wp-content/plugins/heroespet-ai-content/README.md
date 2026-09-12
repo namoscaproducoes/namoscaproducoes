@@ -22,6 +22,7 @@ Ao usar Manus para a imagem, a chave Gemini de imagem deixa de ser necessária; 
 ## Observações
 
 - O agendamento usa o WP-Cron e o fuso definido em **Configurações > Geral**. Em sites com pouco tráfego, configure um cron real do servidor para chamar `wp-cron.php`.
+- Os horários são convertidos usando o fuso do WordPress e registrados no log com a próxima data calculada. Se o Gemini retornar alta demanda, HTTP 503 ou indisponibilidade temporária, o plugin agenda uma nova tentativa 15 minutos depois, sem esperar a próxima semana.
 - O plugin usa `gemini-3.6-flash` somente para o texto. A geração de imagens é exclusivamente pela Manus e não usa a cota de imagens do Gemini.
 - A geração pela Manus depende dos limites e créditos da conta Manus. A tarefa é privada e o arquivo retornado é baixado imediatamente para a Biblioteca de Mídia; o plugin não grava a chave no repositório.
 - O acompanhamento da Manus é assíncrono: o plugin salva o identificador da tarefa e faz verificações curtas pelo WP-Cron, em vez de manter uma única requisição aberta por vários minutos. Isso evita que o servidor pare em uma etapa como “7/18”.
