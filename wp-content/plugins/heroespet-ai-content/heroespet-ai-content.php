@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.5.0
+ * Version: 1.6.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,10 +14,11 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.5.0');
+define('HEROESPET_AI_VERSION', '1.6.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
+define('HEROESPET_AI_RETRY_HOOK', 'heroespet_ai_retry_event');
 
 register_activation_hook(__FILE__, 'heroespet_ai_activate');
 register_deactivation_hook(__FILE__, 'heroespet_ai_deactivate');
@@ -27,6 +28,7 @@ add_action('admin_post_heroespet_ai_generate_now', 'heroespet_ai_generate_now');
 add_action('admin_post_heroespet_ai_clear_logs', 'heroespet_ai_clear_logs');
 add_action('wp_ajax_heroespet_ai_progress', 'heroespet_ai_progress_ajax');
 add_action(HEROESPET_AI_CRON_HOOK, 'heroespet_ai_cron_generate');
+add_action(HEROESPET_AI_RETRY_HOOK, 'heroespet_ai_cron_generate');
 add_action('heroespet_ai_manus_poll_event', 'heroespet_ai_manus_poll');
 add_action('admin_notices', 'heroespet_ai_admin_notice');
 
@@ -60,6 +62,7 @@ function heroespet_ai_activate() {
 
 function heroespet_ai_deactivate() {
     wp_clear_scheduled_hook(HEROESPET_AI_CRON_HOOK);
+    wp_clear_scheduled_hook(HEROESPET_AI_RETRY_HOOK);
 }
 
 function heroespet_ai_register_settings() {
@@ -133,7 +136,7 @@ function heroespet_ai_settings_page() {
       <form method="post" action="options.php">
         <?php settings_fields('heroespet_ai_settings'); do_settings_sections('heroespet-ai'); ?>
         <table class="form-table"><tr><th>Frequência</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[frequency]"><option value="daily" <?php selected($opts['frequency'], 'daily'); ?>>Diário</option><option value="weekly" <?php selected($opts['frequency'], 'weekly'); ?>>Semanal</option><option value="monthly" <?php selected($opts['frequency'], 'monthly'); ?>>Mensal</option></select></td></tr>
-        <tr><th>Horário de publicação</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[publish_time]"><?php foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($opts['publish_time'], $time, false), esc_html($time)); ?></select><p class="description">Usado para Diário e Mensal. O fuso é o definido em Configurações &gt; Geral.</p></td></tr>
+        <tr><th>Horário de publicação</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[publish_time]"><?php foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($opts['publish_time'], $time, false), esc_html($time)); ?></select><p class="description">Usado para Diário e Mensal. Fuso atual da agenda: <strong><?php echo esc_html(wp_timezone_string() ?: 'UTC'); ?></strong>. Para horário de Brasília, selecione São Paulo em Configurações &gt; Geral &gt; Fuso horário.</p></td></tr>
         <tr><th>Publicações semanais</th><td><p>Marque quantos dias quiser e escolha um horário individual para cada dia. Esta grade é usada quando a frequência está definida como <strong>Semanal</strong>.</p><?php foreach ($weekdays as $day => $label) { $slot = $opts['weekly_slots'][$day] ?? ''; echo '<label style="display:block;margin:7px 0"><input type="checkbox" name="' . esc_attr(HEROESPET_AI_OPTION) . '[weekly_enabled][' . (int) $day . ']" value="1" ' . checked($slot !== '', true, false) . '> ' . esc_html($label) . ' <select name="' . esc_attr(HEROESPET_AI_OPTION) . '[weekly_slots][' . (int) $day . ']">'; foreach ($times as $time) printf('<option value="%s" %s>%s</option>', esc_attr($time), selected($slot ?: '08:00', $time, false), esc_html($time)); echo '</select></label>'; } ?></td></tr>
         <tr><th>Status padrão</th><td><select name="<?php echo esc_attr(HEROESPET_AI_OPTION); ?>[status]"><option value="publish" <?php selected($opts['status'], 'publish'); ?>>Publicar automaticamente</option><option value="draft" <?php selected($opts['status'], 'draft'); ?>>Salvar como rascunho</option></select></td></tr></table>
         <?php submit_button('Salvar configurações'); ?>
@@ -158,7 +161,7 @@ function heroespet_ai_reschedule($options = null) {
 function heroespet_ai_schedule_retry($message) {
     $text = strtolower((string) $message);
     if (strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
-    wp_schedule_single_event(time() + 15 * MINUTE_IN_SECONDS, HEROESPET_AI_CRON_HOOK);
+    wp_schedule_single_event(time() + 15 * MINUTE_IN_SECONDS, HEROESPET_AI_RETRY_HOOK);
     heroespet_ai_log('WARNING', 'Falha temporária detectada; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', time() + 15 * MINUTE_IN_SECONDS) . ' (' . wp_timezone_string() . ').');
 }
 
