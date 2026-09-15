@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.6.1
+ * Version: 1.7.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.6.1');
+define('HEROESPET_AI_VERSION', '1.7.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -160,7 +160,8 @@ function heroespet_ai_reschedule($options = null) {
 
 function heroespet_ai_schedule_retry($message) {
     $text = strtolower((string) $message);
-    if (strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
+    $article_failure = strpos($text, 'artigo inválido') !== false || strpos($text, 'campo obrigatório') !== false || strpos($text, 'palavras') !== false || strpos($text, 'json válido') !== false;
+    if (!$article_failure && strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
     wp_schedule_single_event(time() + 15 * MINUTE_IN_SECONDS, HEROESPET_AI_RETRY_HOOK);
     heroespet_ai_log('WARNING', 'Falha temporária detectada; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', time() + 15 * MINUTE_IN_SECONDS) . ' (' . wp_timezone_string() . ').');
 }
@@ -262,6 +263,8 @@ function heroespet_ai_generate_content($manual = false) {
     $article = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], $article_prompt);
     if (is_wp_error($article)) { $article_error = $article->get_error_message(); heroespet_ai_set_progress('error', 100, 'Falha no artigo', $article_error); heroespet_ai_log('ERROR', 'Falha no artigo: ' . $article_error); return array('ok' => false, 'message' => $article_error); }
     $data = heroespet_ai_parse_json(array('candidates' => array(array('content' => array('parts' => array(array('text' => $article)))))));
+    $validation = heroespet_ai_validate_article($data);
+    if (is_wp_error($validation)) { $message = $validation->get_error_message(); heroespet_ai_set_progress('error', 100, 'Artigo inválido', $message); heroespet_ai_log('ERROR', 'Artigo rejeitado antes da imagem Manus: ' . $message); return array('ok' => false, 'message' => 'Artigo inválido: ' . $message); }
     $manus_task = heroespet_ai_manus_create_task($opts['manus_api_key'], $image_prompt);
     if (is_wp_error($manus_task)) { heroespet_ai_set_progress('error', 100, 'Falha ao iniciar imagem Manus', $manus_task->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao iniciar imagem Manus: ' . $manus_task->get_error_message()); return array('ok' => false, 'message' => $manus_task->get_error_message()); }
     update_option('heroespet_ai_manus_pending', array('task_id' => $manus_task, 'api_key' => $opts['manus_api_key'], 'data' => $data, 'topic' => $topic, 'opts' => $opts), false);
@@ -269,15 +272,18 @@ function heroespet_ai_generate_content($manual = false) {
     heroespet_ai_log('INFO', 'Tarefa Manus ' . $manus_task . ' criada; polling assíncrono agendado.');
     wp_schedule_single_event(time() + 10, 'heroespet_ai_manus_poll_event');
     return array('ok' => true, 'pending' => true, 'message' => 'Imagem Manus em processamento.');
-    heroespet_ai_set_progress('running', 72, 'Validando conteúdo', 'Conferindo JSON, quantidade de palavras e dados da imagem.');
-    if (!$data || empty($data['content']) || str_word_count(wp_strip_all_tags($data['content'])) < 1000) { heroespet_ai_set_progress('error', 100, 'Conteúdo inválido', 'O artigo não atingiu 1.000 palavras ou não veio em JSON.'); heroespet_ai_log('ERROR', 'O artigo retornado não atingiu 1000 palavras ou não veio em JSON.'); return array('ok' => false, 'message' => 'O artigo retornado não atingiu 1000 palavras.'); }
-    if (!$image) { heroespet_ai_set_progress('error', 100, 'Imagem não recebida', 'O Gemini não retornou dados de imagem.'); heroespet_ai_log('ERROR', 'A resposta do Gemini não continha dados de imagem.'); return array('ok' => false, 'message' => 'O Gemini não retornou dados de imagem.'); }
-    heroespet_ai_set_progress('running', 88, 'Publicando no WordPress', 'Salvando a imagem na mídia, definindo destaque e preenchendo o Yoast.');
-    $post_id = heroespet_ai_create_post($data, $image, $topic, $opts);
-    if (is_wp_error($post_id)) { heroespet_ai_set_progress('error', 100, 'Falha na publicação', $post_id->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar post: ' . $post_id->get_error_message()); return array('ok' => false, 'message' => $post_id->get_error_message()); }
-    heroespet_ai_log('SUCCESS', 'Post #' . $post_id . ' criado com artigo, mídia, imagem destacada e campos Yoast.');
-    heroespet_ai_set_progress('success', 100, 'Publicação concluída', 'Post #' . $post_id . ' criado com sucesso.');
-    return array('ok' => true, 'message' => 'Post #' . $post_id . ' criado com sucesso.');
+    return array('ok' => true, 'pending' => true, 'message' => 'Imagem Manus em processamento.');
+}
+
+function heroespet_ai_validate_article($data) {
+    if (!is_array($data)) return new WP_Error('article_invalid', 'O Gemini não retornou um JSON válido.');
+    $required = array('title', 'excerpt', 'content', 'focus_keyword', 'seo_title', 'meta_description', 'image_alt');
+    foreach ($required as $field) if (empty($data[$field]) || !is_string($data[$field])) return new WP_Error('article_missing', 'O campo obrigatório ' . $field . ' não foi preenchido pelo Gemini.');
+    $words = str_word_count(wp_strip_all_tags($data['content']));
+    if ($words < 1000) return new WP_Error('article_short', 'O artigo retornado tem apenas ' . $words . ' palavras; são necessárias pelo menos 1.000.');
+    if (mb_strlen($data['seo_title']) > 60) return new WP_Error('seo_title_long', 'O título SEO retornado excede 60 caracteres.');
+    if (mb_strlen($data['meta_description']) > 160) return new WP_Error('meta_long', 'A meta description retornada excede 160 caracteres.');
+    return true;
 }
 
 function heroespet_ai_pick_topic() {
@@ -344,6 +350,8 @@ function heroespet_ai_manus_poll() {
     $download = wp_remote_get($attachment['url'], array('timeout' => 90));
     if (is_wp_error($download) || !wp_remote_retrieve_body($download)) { wp_schedule_single_event(time() + 20, 'heroespet_ai_manus_poll_event'); return; }
     $image = array('data' => wp_remote_retrieve_body($download), 'mime' => $attachment['content_type'] ?? 'image/png');
+    $validation = heroespet_ai_validate_article($pending['data'] ?? array());
+    if (is_wp_error($validation)) { $message = $validation->get_error_message(); delete_option('heroespet_ai_manus_pending'); heroespet_ai_set_progress('error', 100, 'Artigo inválido', $message); heroespet_ai_log('ERROR', 'Publicação bloqueada: ' . $message); heroespet_ai_schedule_retry('Artigo inválido: ' . $message); return; }
     heroespet_ai_set_progress('running', 88, 'Publicando no WordPress', 'Imagem Manus recebida; salvando mídia, destaque e SEO.');
     $post_id = heroespet_ai_create_post($pending['data'], $image, $pending['topic'], $pending['opts']);
     delete_option('heroespet_ai_manus_pending');
