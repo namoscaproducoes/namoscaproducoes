@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.7.1
+ * Version: 1.8.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,11 +14,12 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.7.1');
+define('HEROESPET_AI_VERSION', '1.8.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
 define('HEROESPET_AI_RETRY_HOOK', 'heroespet_ai_retry_event');
+define('HEROESPET_AI_MANUAL_HOOK', 'heroespet_ai_manual_event');
 
 register_activation_hook(__FILE__, 'heroespet_ai_activate');
 register_deactivation_hook(__FILE__, 'heroespet_ai_deactivate');
@@ -28,7 +29,8 @@ add_action('admin_post_heroespet_ai_generate_now', 'heroespet_ai_generate_now');
 add_action('admin_post_heroespet_ai_clear_logs', 'heroespet_ai_clear_logs');
 add_action('wp_ajax_heroespet_ai_progress', 'heroespet_ai_progress_ajax');
 add_action(HEROESPET_AI_CRON_HOOK, 'heroespet_ai_cron_generate');
-add_action(HEROESPET_AI_RETRY_HOOK, 'heroespet_ai_cron_generate');
+add_action(HEROESPET_AI_RETRY_HOOK, 'heroespet_ai_cron_generate', 10, 1);
+add_action(HEROESPET_AI_MANUAL_HOOK, 'heroespet_ai_manual_generate');
 add_action('heroespet_ai_manus_poll_event', 'heroespet_ai_manus_poll');
 add_action('admin_notices', 'heroespet_ai_admin_notice');
 
@@ -63,6 +65,7 @@ function heroespet_ai_activate() {
 function heroespet_ai_deactivate() {
     wp_clear_scheduled_hook(HEROESPET_AI_CRON_HOOK);
     wp_clear_scheduled_hook(HEROESPET_AI_RETRY_HOOK);
+    wp_clear_scheduled_hook(HEROESPET_AI_MANUAL_HOOK);
 }
 
 function heroespet_ai_register_settings() {
@@ -165,7 +168,7 @@ function heroespet_ai_schedule_retry($message) {
     if (!$article_failure && !$quota && strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
     $delay = $quota ? 5 * MINUTE_IN_SECONDS : 15 * MINUTE_IN_SECONDS;
     $retry_at = time() + $delay;
-    if (!wp_next_scheduled(HEROESPET_AI_RETRY_HOOK)) wp_schedule_single_event($retry_at, HEROESPET_AI_RETRY_HOOK);
+    if (!wp_next_scheduled(HEROESPET_AI_RETRY_HOOK)) wp_schedule_single_event($retry_at, HEROESPET_AI_RETRY_HOOK, array(true));
     $label = $quota ? 'Cota/rate limit do Gemini atingido' : 'Falha temporária detectada';
     heroespet_ai_log('WARNING', $label . '; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', $retry_at) . ' (' . wp_timezone_string() . ').');
 }
@@ -189,7 +192,25 @@ function heroespet_ai_next_timestamp($time, $frequency, $weekly_slots = array())
     return $candidate->getTimestamp();
 }
 
-function heroespet_ai_cron_generate() {
+function heroespet_ai_is_weekly_day_allowed($opts) {
+    $today = (int) (new DateTimeImmutable('now', wp_timezone()))->format('N');
+    return !empty($opts['weekly_slots'][$today]);
+}
+
+function heroespet_ai_manual_generate() { heroespet_ai_cron_generate('manual'); }
+
+function heroespet_ai_cron_generate($is_retry = false) {
+    $opts = heroespet_ai_get_options();
+    if ($opts['frequency'] === 'weekly' && $is_retry === false && !heroespet_ai_is_weekly_day_allowed($opts)) {
+        heroespet_ai_log('WARNING', 'Execução semanal bloqueada: hoje não está entre os dias selecionados.');
+        heroespet_ai_reschedule($opts);
+        return;
+    }
+    if ($opts['frequency'] === 'weekly' && $is_retry === true && !heroespet_ai_is_weekly_day_allowed($opts)) {
+        heroespet_ai_log('WARNING', 'Retry semanal bloqueado fora dos dias selecionados; aguardando o próximo dia configurado.');
+        heroespet_ai_reschedule($opts);
+        return;
+    }
     if (get_transient('heroespet_ai_generation_lock')) {
         heroespet_ai_log('WARNING', 'Geração ignorada porque já existe outra execução em andamento.');
         heroespet_ai_reschedule();
@@ -209,7 +230,7 @@ function heroespet_ai_generate_now() {
         $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => 'error', 'heroespet_ai_message' => rawurlencode('Já existe uma geração em andamento. Aguarde o log ser atualizado.')), admin_url('admin.php'));
         wp_safe_redirect($url); exit;
     }
-    wp_schedule_single_event(time() + 5, HEROESPET_AI_CRON_HOOK);
+    wp_schedule_single_event(time() + 5, HEROESPET_AI_MANUAL_HOOK);
     heroespet_ai_set_progress('queued', 5, 'Publicação na fila', 'A geração começará em segundo plano em alguns segundos.');
     heroespet_ai_log('INFO', 'Geração manual enfileirada para execução em segundo plano.');
     $url = add_query_arg(array('page' => 'heroespet-ai', 'heroespet_ai_result' => 'success', 'heroespet_ai_message' => rawurlencode('Geração enfileirada. O artigo será criado em segundo plano; acompanhe o log nesta tela.')), admin_url('admin.php'));
