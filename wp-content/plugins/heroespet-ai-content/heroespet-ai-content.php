@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.9.0
+ * Version: 1.9.1
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.9.0');
+define('HEROESPET_AI_VERSION', '1.9.1');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -296,8 +296,8 @@ function heroespet_ai_generate_content($manual = false) {
     heroespet_ai_set_progress('running', 20, 'Criando resumo editorial', 'O Gemini está preparando o briefing que será usado no texto e na imagem.');
     $brief = heroespet_ai_call_text_with_fallback($opts, 'Crie apenas um resumo editorial de 45 a 70 palavras para um conteúdo sobre ' . $topic['label'] . '. Inclua o ângulo principal, público e cuidados editoriais. Retorne somente o resumo.');
     if (is_wp_error($brief)) { heroespet_ai_set_progress('error', 100, 'Não foi possível criar o resumo', $brief->get_error_message()); heroespet_ai_log('ERROR', 'Falha ao criar resumo: ' . $brief->get_error_message()); return array('ok' => false, 'message' => $brief->get_error_message()); }
-    heroespet_ai_log('INFO', 'Resumo criado. Solicitando artigo ao Gemini e imagem exclusivamente à Manus.');
-    heroespet_ai_set_progress('running', 45, 'Gerando artigo e imagem', 'O artigo será gerado pelo Gemini e a imagem pela Manus.');
+    heroespet_ai_log('INFO', 'Resumo criado. Gerando primeiro o artigo com Gemini; a imagem será solicitada exclusivamente à Manus após a validação.');
+    heroespet_ai_set_progress('running', 45, 'Gerando artigo com Gemini', 'O artigo está sendo gerado. A imagem Manus será solicitada somente depois que o artigo completo for validado.');
     $article_prompt = $opts['prompt'] . "\n\nTema desta publicação: " . $topic['label'] . "\nResumo editorial: " . $brief . "\n\nREQUISITOS OBRIGATÓRIOS DE SEO E FORMATAÇÃO:\n- Retorne JSON válido com as chaves title, excerpt, content, focus_keyword, seo_title, meta_description, image_alt.\n- O conteúdo deve ter no mínimo 1000 palavras, usar HTML sem markdown fences e conter subtítulos <h2> e <h3>.\n- Escolha uma frase-chave específica de 2 a 5 palavras em focus_keyword e use exatamente essa frase de forma natural pelo menos 4 vezes no texto.\n- Use a frase-chave no primeiro parágrafo, em pelo menos um <h2> ou <h3>, no seo_title, na meta_description e no image_alt.\n- O seo_title deve ter no máximo 55 caracteres e a meta_description entre 120 e 155 caracteres, contendo a frase-chave.\n- Inclua pelo menos 1 link interno para " . esc_url(home_url('/')) . " e pelo menos 1 link externo confiável relacionado a saúde animal, usando elementos HTML <a href=\"...\">.\n- Não invente URLs internas: use somente o endereço interno informado.\n- A imagem gerada será inserida automaticamente no topo do artigo, antes do primeiro parágrafo; não insira outra imagem no conteúdo.\n- Retorne somente o objeto JSON.";
     $image_prompt = "Fotografia profissional editorial, realista e natural, relacionada ao seguinte conteúdo para um portal pet brasileiro: " . $brief . ". Pode conter pessoas e pets ou apenas pets conforme fizer sentido. Composição horizontal para capa de artigo, iluminação profissional, sem texto, sem logotipos, sem marca d'água, aspecto 16:9.";
     $article = heroespet_ai_call_text_with_fallback($opts, $article_prompt);
@@ -362,14 +362,15 @@ function heroespet_ai_call_text_retry($key, $model, $prompt) {
 }
 
 function heroespet_ai_call_text_with_fallback($opts, $prompt) {
-    $primary = heroespet_ai_call_text_retry($opts['gemini_text_key'], $opts['text_model'], $prompt);
+    // Na rota com fallback, uma tentativa única evita esperar três retries da chave principal.
+    $primary = heroespet_ai_call_text($opts['gemini_text_key'], $opts['text_model'], $prompt);
     if (!is_wp_error($primary)) return $primary;
     $message = strtolower($primary->get_error_message());
     $can_fallback = strpos($message, 'quota exceeded') !== false || strpos($message, 'rate limit') !== false || strpos($message, 'free_tier') !== false || strpos($message, 'high demand') !== false || strpos($message, 'temporarily') !== false || strpos($message, '503') !== false || strpos($message, 'service unavailable') !== false;
     $fallback_key = trim($opts['gemini_text_key_fallback'] ?? '');
     if ($can_fallback && $fallback_key !== '' && $fallback_key !== $opts['gemini_text_key']) {
         heroespet_ai_log('WARNING', 'A chave Gemini principal falhou; tentando a chave Gemini alternativa.');
-        $secondary = heroespet_ai_call_text_retry($fallback_key, $opts['text_model'], $prompt);
+        $secondary = heroespet_ai_call_text($fallback_key, $opts['text_model'], $prompt);
         if (!is_wp_error($secondary)) { heroespet_ai_log('INFO', 'A chave Gemini alternativa respondeu com sucesso.'); return $secondary; }
         heroespet_ai_log('ERROR', 'A chave Gemini alternativa também falhou: ' . $secondary->get_error_message());
         return $secondary;
