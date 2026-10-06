@@ -10,6 +10,7 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 4. Informe uma chave Gemini para texto e uma chave da API Manus para imagem.
 5. Opcionalmente, informe uma segunda chave em **Chave Gemini alternativa para texto**. Ela deve pertencer preferencialmente a outro projeto Google Cloud/AI Studio com cota independente; quando a chave principal atingir quota, rate limit, alta demanda ou HTTP 503, o plugin tentará a alternativa automaticamente.
    A troca é imediata: o plugin não espera três tentativas da chave principal quando existe uma alternativa configurada. Depois que o artigo completo passar pela validação, a imagem é solicitada exclusivamente à Manus.
+- Erros de conexão como `cURL error 28` e `Operation timed out` também acionam a chave alternativa imediatamente. Se as duas APIs não responderem, o plugin registra o timeout e agenda uma nova tentativa.
 6. Selecione uma das categorias já criadas no WordPress; o post será publicado diretamente nela.
 7. Selecione diário, semanal ou mensal, escolha um horário em intervalos de 15 minutos, defina o status padrão e salve.
 

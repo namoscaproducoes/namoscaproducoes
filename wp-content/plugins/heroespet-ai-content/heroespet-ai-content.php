@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.9.1
+ * Version: 1.9.2
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.9.1');
+define('HEROESPET_AI_VERSION', '1.9.2');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -167,12 +167,13 @@ function heroespet_ai_schedule_retry($message) {
     $text = strtolower((string) $message);
     $article_failure = strpos($text, 'artigo inválido') !== false || strpos($text, 'campo obrigatório') !== false || strpos($text, 'palavras') !== false || strpos($text, 'json válido') !== false;
     $quota = strpos($text, 'quota exceeded') !== false || strpos($text, 'rate limit') !== false || strpos($text, 'free_tier') !== false;
-    if (!$article_failure && !$quota && strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
+    $timeout = strpos($text, 'curl error 28') !== false || strpos($text, 'operation timed out') !== false || strpos($text, 'timed out') !== false || strpos($text, 'timeout') !== false;
+    if (!$article_failure && !$quota && !$timeout && strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
     $delay = $quota ? heroespet_ai_retry_after_seconds($message) : 15 * MINUTE_IN_SECONDS;
     $delay = max($delay, 60);
     $retry_at = time() + $delay;
     if (!wp_next_scheduled(HEROESPET_AI_RETRY_HOOK)) wp_schedule_single_event($retry_at, HEROESPET_AI_RETRY_HOOK, array(true));
-    $label = $quota ? 'Cota/rate limit do Gemini atingido' : 'Falha temporária detectada';
+    $label = $quota ? 'Cota/rate limit do Gemini atingido' : ($timeout ? 'Timeout da API Gemini' : 'Falha temporária detectada');
     heroespet_ai_log('WARNING', $label . '; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', $retry_at) . ' (' . wp_timezone_string() . ').');
 }
 
@@ -354,6 +355,7 @@ function heroespet_ai_call_text_retry($key, $model, $prompt) {
         if (!is_wp_error($last)) return $last;
         $message = strtolower($last->get_error_message());
         if (strpos($message, 'quota exceeded') !== false || strpos($message, 'rate limit') !== false || strpos($message, 'free_tier') !== false) return $last;
+        if (strpos($message, 'curl error 28') !== false || strpos($message, 'operation timed out') !== false || strpos($message, 'timed out') !== false || strpos($message, 'timeout') !== false) return $last;
         if (strpos($message, 'high demand') === false && strpos($message, 'temporarily') === false && strpos($message, '503') === false) return $last;
         heroespet_ai_log('WARNING', 'Gemini em alta demanda; nova tentativa ' . $attempt . ' de 3.');
         if ($attempt < 3) sleep(4 * $attempt);
@@ -366,7 +368,7 @@ function heroespet_ai_call_text_with_fallback($opts, $prompt) {
     $primary = heroespet_ai_call_text($opts['gemini_text_key'], $opts['text_model'], $prompt);
     if (!is_wp_error($primary)) return $primary;
     $message = strtolower($primary->get_error_message());
-    $can_fallback = strpos($message, 'quota exceeded') !== false || strpos($message, 'rate limit') !== false || strpos($message, 'free_tier') !== false || strpos($message, 'high demand') !== false || strpos($message, 'temporarily') !== false || strpos($message, '503') !== false || strpos($message, 'service unavailable') !== false;
+    $can_fallback = strpos($message, 'quota exceeded') !== false || strpos($message, 'rate limit') !== false || strpos($message, 'free_tier') !== false || strpos($message, 'high demand') !== false || strpos($message, 'temporarily') !== false || strpos($message, '503') !== false || strpos($message, 'service unavailable') !== false || strpos($message, 'curl error 28') !== false || strpos($message, 'operation timed out') !== false || strpos($message, 'timed out') !== false || strpos($message, 'timeout') !== false;
     $fallback_key = trim($opts['gemini_text_key_fallback'] ?? '');
     if ($can_fallback && $fallback_key !== '' && $fallback_key !== $opts['gemini_text_key']) {
         heroespet_ai_log('WARNING', 'A chave Gemini principal falhou; tentando a chave Gemini alternativa.');
