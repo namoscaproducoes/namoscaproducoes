@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.9.2
+ * Version: 2.0.0
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.9.2');
+define('HEROESPET_AI_VERSION', '2.0.0');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -40,6 +40,7 @@ function heroespet_ai_defaults() {
         'gemini_text_key_fallback' => '',
         'manus_api_key' => '',
         'text_model' => 'gemini-3.6-flash',
+        'text_model_fallback' => 'gemini-3.6-flash',
         'frequency' => 'daily',
         'publish_time' => '08:00',
         'weekly_slots' => array(1 => '10:00'),
@@ -79,6 +80,7 @@ function heroespet_ai_register_settings() {
         'gemini_text_key_fallback' => array('Chave Gemini alternativa para texto', 'password'),
         'manus_api_key' => array('Chave da API Manus para imagem', 'password'),
         'text_model' => array('Modelo de texto', 'text'),
+        'text_model_fallback' => array('Modelo alternativo de texto', 'text'),
         'prompt' => array('Prompt editável do artigo', 'textarea'),
         'category_id' => array('Categoria dos posts', 'category'),
     );
@@ -90,7 +92,7 @@ function heroespet_ai_register_settings() {
 function heroespet_ai_sanitize_options($input) {
     $old = heroespet_ai_get_options();
     $out = heroespet_ai_defaults();
-    foreach (array('gemini_text_key', 'gemini_text_key_fallback', 'manus_api_key', 'text_model') as $key) {
+    foreach (array('gemini_text_key', 'gemini_text_key_fallback', 'manus_api_key', 'text_model', 'text_model_fallback') as $key) {
         $value = isset($input[$key]) ? sanitize_text_field($input[$key]) : '';
         $out[$key] = ($value === '' && in_array($key, array('gemini_text_key', 'gemini_text_key_fallback', 'manus_api_key'), true)) ? ($old[$key] ?? '') : $value;
     }
@@ -121,6 +123,8 @@ function heroespet_ai_render_field($args) {
     } else {
         printf('<input class="regular-text" type="%s" name="%s[%s]" value="%s" autocomplete="off">', esc_attr($type), esc_attr(HEROESPET_AI_OPTION), esc_attr($key), esc_attr($value));
         if (strpos($key, '_key') !== false) echo '<p class="description">A chave é armazenada nas opções do WordPress e nunca é exibida no painel.</p>';
+        if ($key === 'text_model') echo '<p class="description">Modelo usado pela chave principal. Informe o identificador aceito pelo seu projeto Google.</p>';
+        if ($key === 'text_model_fallback') echo '<p class="description">Modelo usado junto com a chave alternativa quando a principal falhar. Para fallback real, escolha um modelo disponível no segundo projeto.</p>';
     }
 }
 
@@ -371,10 +375,11 @@ function heroespet_ai_call_text_with_fallback($opts, $prompt) {
     $can_fallback = strpos($message, 'quota exceeded') !== false || strpos($message, 'rate limit') !== false || strpos($message, 'free_tier') !== false || strpos($message, 'high demand') !== false || strpos($message, 'temporarily') !== false || strpos($message, '503') !== false || strpos($message, 'service unavailable') !== false || strpos($message, 'curl error 28') !== false || strpos($message, 'operation timed out') !== false || strpos($message, 'timed out') !== false || strpos($message, 'timeout') !== false;
     $fallback_key = trim($opts['gemini_text_key_fallback'] ?? '');
     if ($can_fallback && $fallback_key !== '' && $fallback_key !== $opts['gemini_text_key']) {
-        heroespet_ai_log('WARNING', 'A chave Gemini principal falhou; tentando a chave Gemini alternativa.');
-        $secondary = heroespet_ai_call_text($fallback_key, $opts['text_model'], $prompt);
-        if (!is_wp_error($secondary)) { heroespet_ai_log('INFO', 'A chave Gemini alternativa respondeu com sucesso.'); return $secondary; }
-        heroespet_ai_log('ERROR', 'A chave Gemini alternativa também falhou: ' . $secondary->get_error_message());
+        $fallback_model = trim($opts['text_model_fallback'] ?? '') ?: $opts['text_model'];
+        heroespet_ai_log('WARNING', 'Gemini principal (' . $opts['text_model'] . ') falhou; tentando chave alternativa com o modelo ' . $fallback_model . '.');
+        $secondary = heroespet_ai_call_text($fallback_key, $fallback_model, $prompt);
+        if (!is_wp_error($secondary)) { heroespet_ai_log('INFO', 'A chave Gemini alternativa respondeu com sucesso usando o modelo ' . $fallback_model . '.'); return $secondary; }
+        heroespet_ai_log('ERROR', 'A chave Gemini alternativa (' . $fallback_model . ') também falhou: ' . $secondary->get_error_message());
         return $secondary;
     }
     return $primary;

@@ -8,7 +8,7 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 2. Ative **HeroesPet AI Content** em **Plugins**.
 3. Abra **HeroesPet AI** no menu administrativo.
 4. Informe uma chave Gemini para texto e uma chave da API Manus para imagem.
-5. Opcionalmente, informe uma segunda chave em **Chave Gemini alternativa para texto**. Ela deve pertencer preferencialmente a outro projeto Google Cloud/AI Studio com cota independente; quando a chave principal atingir quota, rate limit, alta demanda ou HTTP 503, o plugin tentará a alternativa automaticamente.
+5. Opcionalmente, informe uma segunda chave em **Chave Gemini alternativa para texto** e o respectivo **Modelo alternativo de texto**. A chave deve pertencer preferencialmente a outro projeto Google Cloud/AI Studio com cota independente; quando a chave principal atingir quota, rate limit, alta demanda ou HTTP 503, o plugin tentará a combinação alternativa automaticamente.
    A troca é imediata: o plugin não espera três tentativas da chave principal quando existe uma alternativa configurada. Depois que o artigo completo passar pela validação, a imagem é solicitada exclusivamente à Manus.
 - Erros de conexão como `cURL error 28` e `Operation timed out` também acionam a chave alternativa imediatamente. Se as duas APIs não responderem, o plugin registra o timeout e agenda uma nova tentativa.
 6. Selecione uma das categorias já criadas no WordPress; o post será publicado diretamente nela.
