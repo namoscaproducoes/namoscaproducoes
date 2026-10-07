@@ -7,7 +7,7 @@ Plugin WordPress para o site HeroesPet. Ele alterna automaticamente entre dicas,
 1. Copie a pasta `heroespet-ai-content` para `wp-content/plugins/` ou instale o arquivo ZIP pelo painel do WordPress.
 2. Ative **HeroesPet AI Content** em **Plugins**.
 3. Abra **HeroesPet AI** no menu administrativo.
-4. Informe uma chave Gemini para texto e uma chave da API Manus para imagem.
+4. Informe a única chave Gemini para texto e a chave da API Manus para imagem.
 5. Selecione uma das categorias já criadas no WordPress; o post será publicado diretamente nela.
 6. Selecione diário, semanal ou mensal, escolha um horário em intervalos de 15 minutos, defina o status padrão e salve.
 
@@ -26,7 +26,7 @@ Ao usar Manus para a imagem, a chave Gemini de imagem deixa de ser necessária; 
 - Se o Gemini retornar alta demanda, HTTP 503 ou indisponibilidade temporária, o plugin agenda uma nova tentativa 15 minutos depois em um hook separado. Essa tentativa não é apagada pelo reagendamento semanal, evitando que uma falha às 08:00 faça o post desaparecer até a semana seguinte.
 - Quando o Gemini retornar `Quota exceeded`, `rate limit` ou `free_tier`, o plugin não desperdiça as três tentativas de alta demanda: interpreta o prazo informado em `Please retry in ...`, acrescenta 60 segundos de margem e agenda uma única recuperação depois desse horário. Se a cota do projeto for realmente diária, será necessário aguardar a renovação ou usar um projeto/modelo com cota disponível.
 - Na frequência semanal, o plugin valida o dia atual antes de iniciar uma publicação automática. Eventos principais e retries fora dos dias marcados são bloqueados e redirecionados para o próximo dia configurado. O botão **Gerar e publicar agora** usa uma fila manual separada e continua permitido em qualquer dia.
-- O plugin usa `gemini-3.6-flash` somente para o texto. A geração de imagens é exclusivamente pela Manus e não usa a cota de imagens do Gemini.
+- O plugin usa uma única chave Gemini e o modelo `gemini-3.6-flash` somente para o texto. A geração de imagens é exclusivamente pela Manus e não usa a cota de imagens do Gemini.
 - A geração pela Manus depende dos limites e créditos da conta Manus. A tarefa é privada e o arquivo retornado é baixado imediatamente para a Biblioteca de Mídia; o plugin não grava a chave no repositório.
 - O acompanhamento da Manus é assíncrono: o plugin salva o identificador da tarefa e faz verificações curtas pelo WP-Cron, em vez de manter uma única requisição aberta por vários minutos. Isso evita que o servidor pare em uma etapa como “7/18”.
 - A categoria é carregada diretamente de `get_categories()` e precisa ser selecionada no painel; o plugin não cria uma categoria paralela nem publica em uma categoria textual aproximada.

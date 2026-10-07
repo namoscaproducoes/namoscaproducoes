@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.8.1
+ * Version: 1.8.2
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.8.1');
+define('HEROESPET_AI_VERSION', '1.8.2');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -50,6 +50,7 @@ function heroespet_ai_defaults() {
 
 function heroespet_ai_get_options() {
     $options = wp_parse_args((array) get_option(HEROESPET_AI_OPTION, array()), heroespet_ai_defaults());
+    unset($options['gemini_text_key_fallback'], $options['text_model_fallback'], $options['image_provider'], $options['gemini_image_key'], $options['image_model']);
     if (($options['text_model'] ?? '') === 'gemini-2.5-flash') {
         $options['text_model'] = 'gemini-3.6-flash';
         update_option(HEROESPET_AI_OPTION, $options, false);
@@ -74,7 +75,7 @@ function heroespet_ai_register_settings() {
     ));
     add_settings_section('heroespet_ai_main', 'Configuração do gerador', '__return_false', 'heroespet-ai');
     $fields = array(
-        'gemini_text_key' => array('Chave Gemini para texto', 'password'),
+        'gemini_text_key' => array('Única chave Gemini para texto', 'password'),
         'manus_api_key' => array('Chave da API Manus para imagem', 'password'),
         'text_model' => array('Modelo de texto', 'text'),
         'prompt' => array('Prompt editável do artigo', 'textarea'),
@@ -118,7 +119,8 @@ function heroespet_ai_render_field($args) {
         printf('<textarea class="large-text" rows="9" name="%s[%s]">%s</textarea><p class="description">O prompt é combinado com o tema alternado e deve orientar o texto com responsabilidade editorial.</p>', esc_attr(HEROESPET_AI_OPTION), esc_attr($key), esc_textarea($value));
     } else {
         printf('<input class="regular-text" type="%s" name="%s[%s]" value="%s" autocomplete="off">', esc_attr($type), esc_attr(HEROESPET_AI_OPTION), esc_attr($key), esc_attr($value));
-        if (strpos($key, '_key') !== false) echo '<p class="description">A chave é armazenada nas opções do WordPress e nunca é exibida no painel.</p>';
+        if ($key === 'gemini_text_key') echo '<p class="description">Esta é a única chave Gemini usada pelo plugin. Ela é armazenada nas opções do WordPress e nunca é exibida no painel.</p>';
+        elseif (strpos($key, '_key') !== false) echo '<p class="description">A chave é armazenada nas opções do WordPress e nunca é exibida no painel.</p>';
     }
 }
 
