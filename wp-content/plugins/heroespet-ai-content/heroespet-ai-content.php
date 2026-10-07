@@ -3,7 +3,7 @@
  * Plugin Name: HeroesPet AI Content
  * Plugin URI: https://heroespet.com.br
  * Description: Gera, agenda e publica conteúdos pet/veterinários com Google Gemini, imagem destacada 1280x720 e campos SEO Yoast.
- * Version: 1.8.0
+ * Version: 1.8.1
  * Author: HeroesPet
  * Author URI: https://heroespet.com.br
  * Requires at least: 6.2
@@ -14,7 +14,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('HEROESPET_AI_VERSION', '1.8.0');
+define('HEROESPET_AI_VERSION', '1.8.1');
 define('HEROESPET_AI_OPTION', 'heroespet_ai_options');
 define('HEROESPET_AI_LOG_OPTION', 'heroespet_ai_logs');
 define('HEROESPET_AI_CRON_HOOK', 'heroespet_ai_generate_event');
@@ -166,11 +166,24 @@ function heroespet_ai_schedule_retry($message) {
     $article_failure = strpos($text, 'artigo inválido') !== false || strpos($text, 'campo obrigatório') !== false || strpos($text, 'palavras') !== false || strpos($text, 'json válido') !== false;
     $quota = strpos($text, 'quota exceeded') !== false || strpos($text, 'rate limit') !== false || strpos($text, 'free_tier') !== false;
     if (!$article_failure && !$quota && strpos($text, 'high demand') === false && strpos($text, 'temporarily') === false && strpos($text, '503') === false && strpos($text, 'service unavailable') === false) return;
-    $delay = $quota ? 5 * MINUTE_IN_SECONDS : 15 * MINUTE_IN_SECONDS;
+    $delay = $quota ? heroespet_ai_retry_after_seconds($message) : 15 * MINUTE_IN_SECONDS;
+    $delay = max($delay, 60);
     $retry_at = time() + $delay;
     if (!wp_next_scheduled(HEROESPET_AI_RETRY_HOOK)) wp_schedule_single_event($retry_at, HEROESPET_AI_RETRY_HOOK, array(true));
     $label = $quota ? 'Cota/rate limit do Gemini atingido' : 'Falha temporária detectada';
     heroespet_ai_log('WARNING', $label . '; nova tentativa agendada para ' . wp_date('Y-m-d H:i:s', $retry_at) . ' (' . wp_timezone_string() . ').');
+}
+
+function heroespet_ai_retry_after_seconds($message) {
+    $text = strtolower((string) $message);
+    if (preg_match('/retry\s+in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?/i', $text, $matches)) {
+        $hours = !empty($matches[1]) ? (int) $matches[1] : 0;
+        $minutes = !empty($matches[2]) ? (int) $matches[2] : 0;
+        $seconds = !empty($matches[3]) ? (float) $matches[3] : 0;
+        $total = (int) ceil(($hours * HOUR_IN_SECONDS) + ($minutes * MINUTE_IN_SECONDS) + $seconds);
+        if ($total > 0) return $total + 60;
+    }
+    return 5 * MINUTE_IN_SECONDS;
 }
 
 function heroespet_ai_next_timestamp($time, $frequency, $weekly_slots = array()) {
